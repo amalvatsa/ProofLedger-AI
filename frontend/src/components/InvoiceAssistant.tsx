@@ -159,16 +159,19 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
 
   const quickQuestions = useMemo(() => {
     if (!selectedRun) return [];
-    const attentionCheck = selectedRun.checks.find((check) => check.outcome !== "PASS");
-    const evidenceQuestion = attentionCheck
-      ? `Explain the ${attentionCheck.title.toLowerCase()} evidence.`
-      : "Which controls passed and what evidence supports them?";
-    return [
-      "Why did this invoice receive this decision?",
-      evidenceQuestion,
-      selectedRun.matched_po_number ? "Explain the PO balance calculation." : "What PO evidence is missing?",
-      "What should the AP analyst do next?",
-    ];
+    return decisionGroup(selectedRun.decision) === "attention"
+      ? [
+          "Give me the 30-second summary.",
+          "What's wrong with this invoice?",
+          "Show me the important numbers.",
+          "What should I do next?",
+        ]
+      : [
+          "Give me the 30-second summary.",
+          "Why is this invoice ready?",
+          "Show me the important numbers.",
+          "What happens next?",
+        ];
   }, [selectedRun]);
 
   function chooseInvoice(run: RunRecord) {
@@ -182,7 +185,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
         id: `intro-${run.id}`,
         role: "assistant",
         intro: true,
-        content: `This conversation is now locked to ${invoiceLabel(run)}. I can explain why it is ${readableDecision(run.decision)}, trace the evidence, and walk through its controls. I cannot change the decision or authorize payment.`,
+        content: `You're looking at ${invoiceLabel(run)}, which is ${readableDecision(run.decision)}. Ask naturally—“What is this?”, “What's wrong?”, “Show me the numbers”, or “What should I do next?” I'll stay grounded in this receipt and cannot change its decision or authorize payment.`,
       },
     ]);
   }
@@ -443,7 +446,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                             void ask(question);
                           }
                         }}
-                        placeholder="Ask why it was flagged, how the balance was calculated, or what happens next…"
+                        placeholder="Ask naturally — “What's wrong?”, “Show me the numbers”, or “What do I do next?”"
                         maxLength={500}
                         rows={2}
                         disabled={!status?.configured || loadingAnswer}

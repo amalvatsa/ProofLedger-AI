@@ -14,7 +14,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[1]
 BASE_URL = os.getenv("PROOFLEDGER_URL", "http://127.0.0.1:8000").rstrip("/")
 EXPECTED_PROVIDER = os.getenv("PROOFLEDGER_EXPECTED_PROVIDER", "").strip().casefold()
-SAMPLE = ROOT / "demo_samples" / "happy_path.pdf"
+SAMPLE = ROOT / "demo_samples" / "ambiguous_po.pdf"
 
 
 def require(condition: bool, message: str) -> None:
@@ -55,9 +55,9 @@ def main() -> None:
             )
         require(upload.status_code == 202, f"Upload failed: {upload.status_code} {upload.text}")
         run = wait_for_run(client, upload.json()["run_id"])
-        require(run["decision"] == "READY_FOR_POSTING", "Synthetic happy-path receipt changed unexpectedly")
+        require(run["decision"] == "NEEDS_REVIEW", "Synthetic ambiguous-PO receipt changed unexpectedly")
 
-        question = "Explain the PO balance calculation and why this invoice is ready."
+        question = "What is wrong with this?"
         reply_response = client.post(
             f"/api/runs/{run['id']}/assistant",
             json={"question": question, "history": []},
@@ -65,13 +65,16 @@ def main() -> None:
         reply_response.raise_for_status()
         reply = reply_response.json()
         require(reply["answer"].strip(), "Assistant returned an empty answer")
+        require("[" not in reply["answer"], "Answer exposed an internal evidence label")
+        require("NEEDS_REVIEW" not in reply["answer"], "Answer exposed an internal decision enum")
+        require(len(reply["answer"].split()) <= 140, "Answer is too long to be conversational")
         require(reply["provider_id"] == status["provider_id"], "Reply provider differs from status")
         require(reply["model"] == status["model"], "Reply model differs from status")
         require(reply["scope"] == "selected_invoice_only", "Assistant scope changed")
         require(reply["decision_snapshot"] == run["decision"], "Decision snapshot changed")
         require(reply["latency_ms"] > 0, "Assistant latency was not recorded")
         labels = {item["label"] for item in reply["evidence"]}
-        require("Rule B001_PO_REMAINING" in labels, "PO balance evidence was not returned")
+        require("Rule P001_PO_MATCH" in labels, "PO match evidence was not returned")
 
         blocked = client.post(
             f"/api/runs/{run['id']}/assistant",

@@ -118,6 +118,15 @@ def test_assistant_rejects_unrelated_and_injection_requests_before_model_call(cl
         "Why is this?",
         "What happened?",
         "What next?",
+        "What should I do next?",
+        "What do we do next?",
+        "What happens next?",
+        "What is wrong with this?",
+        "What is this invoice?",
+        "What are we missing in the numbers?",
+        "Show me the important numbers.",
+        "What am I looking at?",
+        "Can you explain this in simple words?",
     ],
 )
 def test_selected_receipt_accepts_natural_contextual_questions(client, monkeypatch, question):
@@ -133,6 +142,21 @@ def test_selected_receipt_accepts_natural_contextual_questions(client, monkeypat
     assert response.status_code == 200
     assert response.json()["scope"] == "selected_invoice_only"
     assert question.strip() in response.json()["answer"]
+
+
+@pytest.mark.parametrize(
+    "question",
+    [
+        "Give me the 30-second summary.",
+        "What's wrong with this invoice?",
+        "Show me the important numbers.",
+        "What should I do next?",
+        "Why is this invoice ready?",
+        "What happens next?",
+    ],
+)
+def test_every_frontend_suggested_question_passes_the_scope_gate(question):
+    assert assistant_module.validate_question(question) == question
 
 
 @pytest.mark.parametrize(
@@ -266,6 +290,55 @@ def test_evidence_references_follow_question_topic(question, expected_label):
     assert any(item["label"] == expected_label for item in references)
 
 
+@pytest.mark.parametrize(
+    ("question", "expected_intent"),
+    [
+        ("What is this invoice?", "overview"),
+        ("What is wrong with this?", "issue"),
+        ("What are we missing in the numbers?", "numbers"),
+        ("What should I do next?", "next_action"),
+        ("Which controls failed?", "evidence"),
+    ],
+)
+def test_natural_questions_are_routed_to_the_right_answer_intent(question, expected_intent):
+    assert assistant_module.question_intent(question) == expected_intent
+
+
+def test_broad_issue_and_numbers_questions_return_relevant_evidence():
+    context = {
+        "decision": "NEEDS_REVIEW",
+        "explanation": "The purchase order is not confirmed.",
+        "policy_checks": [
+            {
+                "rule_id": "P001_PO_MATCH",
+                "outcome": "REVIEW",
+                "detail": "Two candidate purchase orders remain.",
+            },
+            {
+                "rule_id": "T001_TOTAL_RECONCILIATION",
+                "outcome": "PASS",
+                "detail": "Net plus tax equals gross.",
+            },
+            {
+                "rule_id": "B001_PO_REMAINING",
+                "outcome": "REVIEW",
+                "detail": "Capacity cannot be confirmed without a PO match.",
+            },
+        ],
+    }
+
+    issue_labels = {
+        item["label"] for item in assistant_module.evidence_references("What is wrong with this?", context)
+    }
+    number_labels = {
+        item["label"]
+        for item in assistant_module.evidence_references("What are we missing in the numbers?", context)
+    }
+
+    assert {"Receipt decision", "Rule P001_PO_MATCH"}.issubset(issue_labels)
+    assert {"Rule T001_TOTAL_RECONCILIATION", "Rule B001_PO_REMAINING"}.issubset(number_labels)
+
+
 def test_model_output_parser_and_payment_guardrail():
     payload = {
         "output": [
@@ -282,7 +355,7 @@ def test_model_output_parser_and_payment_guardrail():
     assert assistant_module._extract_output_text(payload) == "First evidence sentence.\nSecond evidence sentence."
     guarded = assistant_module._safe_answer("I approve this invoice for payment.", "NEEDS_REVIEW")
     assert "cannot approve" in guarded
-    assert "NEEDS_REVIEW" in guarded
+    assert "needs review" in guarded
     posting_guarded = assistant_module._safe_answer("You can approve and post this invoice.", "READY_FOR_POSTING")
     assert "cannot approve" in posting_guarded
 
@@ -301,7 +374,7 @@ def test_model_output_parser_and_payment_guardrail():
 def test_post_model_guardrail_catches_financial_action_variants(model_output):
     guarded = assistant_module._safe_answer(model_output, "NEEDS_REVIEW")
     assert "cannot approve or execute payment" in guarded
-    assert "NEEDS_REVIEW" in guarded
+    assert "needs review" in guarded
 
 
 def test_model_output_guardrail_removes_links_limits_length_and_rejects_empty_output():
@@ -322,22 +395,28 @@ def test_model_output_guardrail_removes_links_limits_length_and_rejects_empty_ou
         assistant_module._safe_answer("   ", "NEEDS_REVIEW")
 
 
-def test_model_output_keeps_only_receipt_backed_evidence_labels():
+def test_model_output_removes_internal_evidence_labels_and_codes():
     context = {
-        "decision": "READY_FOR_POSTING",
+        "decision": "NEEDS_REVIEW",
         "money": {"net": "25000.00"},
         "invoice_fields": {"net_total": "25000.00"},
-        "policy_checks": [{"rule_id": "B001_PO_REMAINING"}],
+        "policy_checks": [
+            {"rule_id": "B001_PO_REMAINING", "title": "Remaining PO capacity"},
+        ],
     }
     answer = assistant_module._safe_answer(
-        "Net is INR 25,000 [Invoice field: net_amount]. Capacity passed [Rule: B001_PO_REMAINING].",
-        "READY_FOR_POSTING",
+        "Status NEEDS_REVIEW [Receipt: decision]. B001_PO_REMAINING needs attention "
+        "[Rule: B001_PO_REMAINING]. Net is INR 25,000 [Invoice field: net_amount].",
+        "NEEDS_REVIEW",
         context,
     )
 
+    assert "[" not in answer
     assert "net_amount" not in answer
-    assert "[Rule: B001_PO_REMAINING]" in answer
-    assert "Receipt: money.net" in assistant_module.allowed_evidence_labels(context)
+    assert "NEEDS_REVIEW" not in answer
+    assert "B001_PO_REMAINING" not in answer
+    assert "needs review" in answer
+    assert "remaining po capacity" in answer
 
 
 def test_history_is_bounded_and_sanitized():
@@ -413,9 +492,10 @@ def test_provider_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     assert model_input["invoice_context"]["receipt_id"] == "selected-receipt-only"
     assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "SYN-100"
     assert len(model_input["conversation"]) == assistant_module.MAX_HISTORY_MESSAGES
-    assert "Receipt: decision" in model_input["allowed_evidence_labels"]
+    assert model_input["answer_intent"] == "overview"
+    assert "Identify the invoice" in model_input["response_guidance"]
     assert all(item["content"] == "explain it" for item in model_input["conversation"])
-    assert answer == "The receipt needs review. [Receipt: decision]"
+    assert answer == "The receipt needs review."
 
 
 def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
@@ -476,9 +556,10 @@ def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     assert "untrusted data" in payload["systemInstruction"]["parts"][0]["text"]
     assert model_input["invoice_context"]["receipt_id"] == "selected-gemini-receipt"
     assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "GEM-100"
-    assert "Invoice field: invoice_number" in model_input["allowed_evidence_labels"]
+    assert model_input["answer_intent"] == "overview"
+    assert "Identify the invoice" in model_input["response_guidance"]
     assert "hidden reasoning" not in answer
-    assert answer == "Gemini grounded receipt answer. [Receipt: decision]"
+    assert answer == "Gemini grounded receipt answer."
 
 
 @pytest.mark.parametrize(
