@@ -1,0 +1,7 @@
+po_number,vendor_id,currency,authorized_net,status,description
+PO-1001,VEND-ACME,INR,120000.00,OPEN,Office equipment and supplies
+PO-2002,VEND-NOVA,INR,100000.00,OPEN,Industrial components annual order
+PO-3001,VEND-KITE,INR,50000.00,OPEN,Design services retainer
+PO-4001,VEND-ORCHID,INR,30000.00,OPEN,Customer workshop logistics
+PO-4002,VEND-ORCHID,INR,40000.00,OPEN,Annual offsite services
+
