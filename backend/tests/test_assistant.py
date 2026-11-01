@@ -46,7 +46,9 @@ def test_assistant_status_truthfully_reports_missing_configuration(client, monke
     payload = response.json()
     assert payload["configured"] is False
     assert payload["provider"] is None
+    assert payload["provider_id"] == "openai"
     assert payload["model"] == "gpt-6-luna"
+    assert payload["configuration_error"] is None
     assert payload["scope"] == "selected_invoice_only"
 
 
@@ -59,8 +61,21 @@ def test_assistant_status_prefers_gemini_when_both_keys_exist(client, monkeypatc
     assert response.status_code == 200
     payload = response.json()
     assert payload["configured"] is True
+    assert payload["provider_id"] == "gemini"
     assert payload["provider"] == "Google Gemini API"
     assert payload["model"] == "gemini-3.6-flash"
+    assert payload["thinking_level"] == "minimal"
+
+
+def test_invalid_gemini_thinking_level_is_reported_as_configuration_error(client, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-not-sent")
+    monkeypatch.setenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", "extreme")
+
+    status = client.get("/api/assistant/status").json()
+
+    assert status["configured"] is False
+    assert status["provider_id"] == "gemini"
+    assert "minimal, low, medium, or high" in status["configuration_error"]
 
 
 def test_explicit_openai_provider_override_is_respected(client, monkeypatch):
@@ -307,6 +322,24 @@ def test_model_output_guardrail_removes_links_limits_length_and_rejects_empty_ou
         assistant_module._safe_answer("   ", "NEEDS_REVIEW")
 
 
+def test_model_output_keeps_only_receipt_backed_evidence_labels():
+    context = {
+        "decision": "READY_FOR_POSTING",
+        "money": {"net": "25000.00"},
+        "invoice_fields": {"net_total": "25000.00"},
+        "policy_checks": [{"rule_id": "B001_PO_REMAINING"}],
+    }
+    answer = assistant_module._safe_answer(
+        "Net is INR 25,000 [Invoice field: net_amount]. Capacity passed [Rule: B001_PO_REMAINING].",
+        "READY_FOR_POSTING",
+        context,
+    )
+
+    assert "net_amount" not in answer
+    assert "[Rule: B001_PO_REMAINING]" in answer
+    assert "Receipt: money.net" in assistant_module.allowed_evidence_labels(context)
+
+
 def test_history_is_bounded_and_sanitized():
     history = [
         {"role": "user", "content": f"  message {index}   with   spaces  "}
@@ -380,6 +413,7 @@ def test_provider_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     assert model_input["invoice_context"]["receipt_id"] == "selected-receipt-only"
     assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "SYN-100"
     assert len(model_input["conversation"]) == assistant_module.MAX_HISTORY_MESSAGES
+    assert "Receipt: decision" in model_input["allowed_evidence_labels"]
     assert all(item["content"] == "explain it" for item in model_input["conversation"])
     assert answer == "The receipt needs review. [Receipt: decision]"
 
@@ -435,14 +469,30 @@ def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     assert captured["url"].endswith("/v1beta/models/gemini-test-model:generateContent")
     assert captured["api_key"] == "gemini-secret-test-key"
     assert captured["authorization"] is None
-    assert payload["store"] is False
-    assert payload["generationConfig"]["maxOutputTokens"] == 500
-    assert payload["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "low"
+    assert "store" not in payload
+    assert payload["generationConfig"]["maxOutputTokens"] == assistant_module.GEMINI_MAX_OUTPUT_TOKENS
+    assert payload["generationConfig"]["responseMimeType"] == "text/plain"
+    assert payload["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "LOW"
     assert "untrusted data" in payload["systemInstruction"]["parts"][0]["text"]
     assert model_input["invoice_context"]["receipt_id"] == "selected-gemini-receipt"
     assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "GEM-100"
+    assert "Invoice field: invoice_number" in model_input["allowed_evidence_labels"]
     assert "hidden reasoning" not in answer
     assert answer == "Gemini grounded receipt answer. [Receipt: decision]"
+
+
+@pytest.mark.parametrize(
+    ("payload", "message"),
+    [
+        ({"promptFeedback": {"blockReason": "SAFETY"}}, "blocked this request"),
+        ({"candidates": [{"finishReason": "SAFETY", "content": {"parts": []}}]}, "blocked the answer"),
+        ({"candidates": [{"finishReason": "MAX_TOKENS", "content": {"parts": []}}]}, "response limit"),
+        ({"candidates": [{"finishReason": "STOP", "content": {"parts": []}}]}, "empty answer"),
+    ],
+)
+def test_gemini_empty_and_blocked_responses_are_actionable(payload, message):
+    with pytest.raises(assistant_module.AssistantProviderError, match=message):
+        assistant_module._gemini_answer_text(payload)
 
 
 @pytest.mark.parametrize(

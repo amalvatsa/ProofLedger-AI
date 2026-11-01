@@ -11,6 +11,9 @@ import httpx
 DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
 DEFAULT_MODEL = DEFAULT_OPENAI_MODEL
+DEFAULT_GEMINI_THINKING_LEVEL = "minimal"
+GEMINI_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+GEMINI_MAX_OUTPUT_TOKENS = 1024
 MAX_QUESTION_CHARACTERS = 500
 MAX_HISTORY_MESSAGES = 8
 MAX_HISTORY_CHARACTERS = 500
@@ -104,7 +107,7 @@ Answer quality:
 - Explain calculations step by step when amounts are involved.
 - Distinguish supplier claims from authoritative vendor, PO, and confirmed-invoice records.
 - If evidence is missing, say exactly: "The receipt does not contain enough evidence to answer that."
-- Reference relevant evidence inline using only labels that exist in context, such as [Rule: B001_PO_REMAINING], [Receipt: decision], or [Invoice field: gross_total].
+- Reference relevant evidence inline using only exact labels supplied in allowed_evidence_labels. Never invent or rename a label.
 - End with a practical next step when the receipt includes one.
 - Keep the answer under 140 words.
 """
@@ -122,7 +125,7 @@ class AssistantProviderError(RuntimeError):
     pass
 
 
-def _provider_configuration() -> dict[str, str | bool | None]:
+def _provider_configuration() -> dict[str, Any]:
     requested = os.getenv("PROOFLEDGER_LLM_PROVIDER", "auto").strip().casefold() or "auto"
     openai_key = os.getenv("OPENAI_API_KEY", "").strip()
     gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -134,10 +137,21 @@ def _provider_configuration() -> dict[str, str | bool | None]:
     else:
         provider = "unsupported"
 
+    configuration_error: str | None = None
+    thinking_level: str | None = None
+
     if provider == "gemini":
         api_key = gemini_key
         model = os.getenv("PROOFLEDGER_GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
         display_name = "Google Gemini API"
+        thinking_level = (
+            os.getenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", DEFAULT_GEMINI_THINKING_LEVEL).strip().casefold()
+            or DEFAULT_GEMINI_THINKING_LEVEL
+        )
+        if thinking_level not in GEMINI_THINKING_LEVELS:
+            configuration_error = (
+                "PROOFLEDGER_GEMINI_THINKING_LEVEL must be minimal, low, medium, or high."
+            )
     elif provider == "openai":
         api_key = openai_key
         model = (
@@ -150,13 +164,16 @@ def _provider_configuration() -> dict[str, str | bool | None]:
         api_key = ""
         model = "unavailable"
         display_name = None
+        configuration_error = "PROOFLEDGER_LLM_PROVIDER must be openai, gemini, or auto."
 
     return {
         "provider_id": provider,
         "provider": display_name,
         "api_key": api_key,
         "model": model,
-        "configured": bool(api_key) and provider in {"openai", "gemini"},
+        "thinking_level": thinking_level,
+        "configuration_error": configuration_error,
+        "configured": bool(api_key) and provider in {"openai", "gemini"} and not configuration_error,
     }
 
 
@@ -164,8 +181,11 @@ def assistant_status() -> dict[str, Any]:
     configuration = _provider_configuration()
     return {
         "configured": configuration["configured"],
-        "provider": configuration["provider"] if configuration["configured"] else None,
+        "provider_id": configuration["provider_id"] if configuration["provider_id"] in {"openai", "gemini"} else None,
+        "provider": configuration["provider"] if configuration["api_key"] else None,
         "model": configuration["model"],
+        "thinking_level": configuration["thinking_level"],
+        "configuration_error": configuration["configuration_error"],
         "scope": "selected_invoice_only",
         "guardrails": [
             "Current receipt evidence only",
@@ -277,6 +297,29 @@ def evidence_references(question: str, context: dict[str, Any]) -> list[dict[str
     return references[:4]
 
 
+def allowed_evidence_labels(context: dict[str, Any]) -> list[str]:
+    labels = [
+        "Receipt: decision",
+        "Receipt: explanation",
+        "Receipt: next_action",
+        "Receipt: matched_po_number",
+    ]
+    labels.extend(
+        f"Receipt: money.{key}"
+        for key in (context.get("money") or {})
+    )
+    labels.extend(
+        f"Invoice field: {key}"
+        for key in (context.get("invoice_fields") or {})
+    )
+    labels.extend(
+        f"Rule: {check['rule_id']}"
+        for check in context.get("policy_checks") or []
+        if check.get("rule_id")
+    )
+    return labels
+
+
 def _extract_output_text(payload: dict[str, Any]) -> str:
     chunks: list[str] = []
     for item in payload.get("output") or []:
@@ -300,6 +343,32 @@ def _extract_gemini_output_text(payload: dict[str, Any]) -> str:
     return "\n".join(chunks).strip()
 
 
+def _gemini_answer_text(payload: dict[str, Any]) -> str:
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        prompt_feedback = payload.get("promptFeedback") or {}
+        if prompt_feedback.get("blockReason"):
+            raise AssistantProviderError(
+                "Google Gemini blocked this request before generation. Rephrase the invoice question."
+            )
+        raise AssistantProviderError("Google Gemini returned no answer candidate.")
+
+    finish_reason = str(candidates[0].get("finishReason") or "").upper()
+    if finish_reason in {"SAFETY", "RECITATION", "PROHIBITED_CONTENT", "BLOCKLIST"}:
+        raise AssistantProviderError(
+            "Google Gemini blocked the answer. Rephrase the invoice question and try again."
+        )
+
+    answer = _extract_gemini_output_text(payload)
+    if not answer and finish_reason == "MAX_TOKENS":
+        raise AssistantProviderError(
+            "Google Gemini reached its response limit before producing an answer. Try a narrower question."
+        )
+    if not answer:
+        raise AssistantProviderError("Google Gemini returned an empty answer.")
+    return answer
+
+
 def _provider_error_code(response: httpx.Response) -> str:
     try:
         provider_error = response.json().get("error") or {}
@@ -311,29 +380,48 @@ def _provider_error_code(response: httpx.Response) -> str:
     )
 
 
-def _raise_provider_http_error(error: httpx.HTTPStatusError) -> None:
+def _raise_provider_http_error(error: httpx.HTTPStatusError, provider_id: str) -> None:
     status_code = error.response.status_code
     provider_code = _provider_error_code(error.response)
-    if status_code in {401, 403}:
+    if status_code in {401, 403} or (
+        status_code == 400
+        and any(term in provider_code for term in ("api_key_invalid", "api key not valid", "invalid api key"))
+    ):
         raise AssistantUnavailable("The configured AI credential was rejected.") from error
     if status_code == 404:
         raise AssistantUnavailable("The configured AI model is unavailable. Check the provider model name.") from error
+    if status_code == 400:
+        provider_name = "Google Gemini" if provider_id == "gemini" else "OpenAI"
+        raise AssistantUnavailable(
+            f"{provider_name} rejected the model configuration. Check the configured model and reasoning settings."
+        ) from error
     if status_code == 429:
-        if "quota" in provider_code or "billing" in provider_code:
+        if any(term in provider_code for term in ("quota", "billing", "resource_exhausted", "insufficient")):
             raise AssistantUnavailable(
                 "The AI provider quota or credits are exhausted. Check the active provider's billing and usage limits."
             ) from error
         raise AssistantUnavailable("The AI provider rate limit was reached. Try again shortly.") from error
+    if status_code in {408, 502, 503, 504}:
+        raise AssistantProviderError("The AI provider is temporarily unavailable. Try again shortly.") from error
     raise AssistantProviderError("The AI provider could not answer this request.") from error
 
 
-def _safe_answer(text: str, decision: str | None) -> str:
+def _safe_answer(text: str, decision: str | None, context: dict[str, Any] | None = None) -> str:
     answer = re.sub(r"https?://\S+", "[external link removed]", text)
     answer = re.sub(r"\*\*(.*?)\*\*", r"\1", answer)
     answer = answer.replace("`", "")
     answer = " ".join(answer.split()).strip()
     if not answer:
         raise AssistantProviderError("The model returned no answer.")
+    if context is not None:
+        allowed_labels = {f"[{label}]" for label in allowed_evidence_labels(context)}
+        answer = re.sub(
+            r"\[(?:Rule|Receipt|Invoice field):\s*[^\]]+\]",
+            lambda match: match.group(0) if match.group(0) in allowed_labels else "",
+            answer,
+            flags=re.IGNORECASE,
+        )
+        answer = " ".join(answer.split()).strip()
     answer = answer[:MAX_ANSWER_CHARACTERS].rstrip()
     risky_patterns = (
         r"\b(?:i|we)\s+(?:approve|authorize)\b",
@@ -364,16 +452,17 @@ def generate_invoice_answer(
     provider_id = str(configuration["provider_id"])
     api_key = str(configuration["api_key"] or "")
     model = str(configuration["model"])
-    if provider_id == "unsupported":
-        raise AssistantUnavailable("PROOFLEDGER_LLM_PROVIDER must be openai, gemini, or auto.")
+    if configuration["configuration_error"]:
+        raise AssistantUnavailable(str(configuration["configuration_error"]))
     if not api_key:
         key_name = "GEMINI_API_KEY" if provider_id == "gemini" else "OPENAI_API_KEY"
         raise AssistantUnavailable(f"The invoice AI assistant needs {key_name}.")
 
     conversation = sanitize_history(history)
-    gemini_thinking_level = os.getenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", "minimal").strip() or "minimal"
+    gemini_thinking_level = str(configuration["thinking_level"] or DEFAULT_GEMINI_THINKING_LEVEL).upper()
     input_payload = {
         "invoice_context": context,
+        "allowed_evidence_labels": allowed_evidence_labels(context),
         "conversation": conversation,
         "question": question,
     }
@@ -395,10 +484,10 @@ def generate_invoice_answer(
                             }
                         ],
                         "generationConfig": {
-                            "maxOutputTokens": 500,
+                            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+                            "responseMimeType": "text/plain",
                             "thinkingConfig": {"thinkingLevel": gemini_thinking_level},
                         },
-                        "store": False,
                     },
                 )
             else:
@@ -419,7 +508,7 @@ def generate_invoice_answer(
                 )
             response.raise_for_status()
     except httpx.HTTPStatusError as error:
-        _raise_provider_http_error(error)
+        _raise_provider_http_error(error, provider_id)
     except httpx.HTTPError as error:
         raise AssistantProviderError("The AI provider is temporarily unavailable.") from error
 
@@ -429,8 +518,8 @@ def generate_invoice_answer(
         raise AssistantProviderError("The AI provider returned an invalid response.") from error
 
     answer = (
-        _extract_gemini_output_text(response_payload)
+        _gemini_answer_text(response_payload)
         if provider_id == "gemini"
         else _extract_output_text(response_payload)
     )
-    return _safe_answer(answer, context.get("decision"))
+    return _safe_answer(answer, context.get("decision"), context)

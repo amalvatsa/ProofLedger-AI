@@ -7,6 +7,7 @@ import {
   FileText,
   Inbox,
   LockKeyhole,
+  RotateCcw,
   Search,
   Send,
   ShieldCheck,
@@ -29,6 +30,9 @@ interface ChatEntry extends AssistantHistoryMessage {
   id: string;
   evidence?: AssistantEvidence[];
   intro?: boolean;
+  provider?: string;
+  model?: string;
+  latencyMs?: number;
 }
 
 interface InvoiceAssistantProps {
@@ -81,6 +85,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
   const [loadingRuns, setLoadingRuns] = useState(false);
   const [loadingAnswer, setLoadingAnswer] = useState(false);
   const [error, setError] = useState("");
+  const [failedQuestion, setFailedQuestion] = useState("");
   const [providerState, setProviderState] = useState<ProviderState>("checking");
   const logRef = useRef<HTMLDivElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
@@ -119,6 +124,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
       setQuestion("");
       setSearch("");
       setError("");
+      setFailedQuestion("");
     }
   }, [open]);
 
@@ -151,17 +157,26 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
     ready: filteredRuns.filter((run) => decisionGroup(run.decision) === "ready"),
   }), [filteredRuns]);
 
-  const quickQuestions = selectedRun ? [
-    "Why did this invoice receive this decision?",
-    selectedRun.matched_po_number ? "Explain the PO balance calculation." : "What PO evidence is missing?",
-    "What should the AP analyst do next?",
-  ] : [];
+  const quickQuestions = useMemo(() => {
+    if (!selectedRun) return [];
+    const attentionCheck = selectedRun.checks.find((check) => check.outcome !== "PASS");
+    const evidenceQuestion = attentionCheck
+      ? `Explain the ${attentionCheck.title.toLowerCase()} evidence.`
+      : "Which controls passed and what evidence supports them?";
+    return [
+      "Why did this invoice receive this decision?",
+      evidenceQuestion,
+      selectedRun.matched_po_number ? "Explain the PO balance calculation." : "What PO evidence is missing?",
+      "What should the AP analyst do next?",
+    ];
+  }, [selectedRun]);
 
   function chooseInvoice(run: RunRecord) {
     setSelectedRun(run);
     setSearch("");
     setQuestion("");
     setError("");
+    setFailedQuestion("");
     setMessages([
       {
         id: `intro-${run.id}`,
@@ -177,20 +192,25 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
     setMessages([]);
     setQuestion("");
     setError("");
+    setFailedQuestion("");
   }
 
-  async function ask(text: string) {
+  async function ask(text: string, retry = false) {
     const trimmed = text.trim();
     if (!trimmed || !selectedRun || loadingAnswer || !status?.configured) return;
     const userEntry: ChatEntry = { id: `user-${Date.now()}`, role: "user", content: trimmed };
-    const history = messages
+    const historySource = retry && messages.at(-1)?.role === "user" && messages.at(-1)?.content === trimmed
+      ? messages.slice(0, -1)
+      : messages;
+    const history = historySource
       .filter((message) => !message.intro)
       .slice(-8)
       .map(({ role, content }) => ({ role, content: content.slice(0, 500) }));
 
-    setMessages((current) => [...current, userEntry]);
+    if (!retry) setMessages((current) => [...current, userEntry]);
     setQuestion("");
     setError("");
+    setFailedQuestion("");
     setLoadingAnswer(true);
     try {
       const reply = await api.askAssistant(selectedRun.id, trimmed, history);
@@ -202,11 +222,15 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
           role: "assistant",
           content: reply.answer,
           evidence: reply.evidence,
+          provider: reply.provider,
+          model: reply.model,
+          latencyMs: reply.latency_ms,
         },
       ]);
     } catch (caught) {
       const message = caught instanceof Error ? caught.message : "The invoice assistant could not answer.";
       setError(message);
+      setFailedQuestion(trimmed);
       if (/rate limit|quota|credits/i.test(message)) setProviderState("limited");
       else if (/credential|provider|unavailable|configured/i.test(message)) setProviderState("unavailable");
     } finally {
@@ -224,12 +248,12 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
     : !status.configured
       ? "Model setup needed"
       : providerState === "verified"
-        ? `${status.provider?.includes("Gemini") ? "Gemini" : "OpenAI"} · ${status.model} · verified`
+        ? `${status.provider_id === "gemini" ? "Gemini" : "OpenAI"} · ${status.model} · verified`
         : providerState === "limited"
           ? "Provider rate-limited"
           : providerState === "unavailable"
             ? "Provider unavailable"
-            : `${status.provider?.includes("Gemini") ? "Gemini" : "OpenAI"} · ${status.model} · configured`;
+            : `${status.provider_id === "gemini" ? "Gemini" : "OpenAI"} · ${status.model} · configured`;
 
   return (
     <AnimatePresence>
@@ -347,7 +371,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                     <div>
                       <span className="eyebrow">Real model required</span>
                       <h4>Connect the invoice AI</h4>
-                      <p>Set <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code>, choose the provider if needed, and restart ProofLedger. No simulated answer is shown while the model is unavailable.</p>
+                      <p>{status.configuration_error || <>Set <code>GEMINI_API_KEY</code> for Google Gemini or <code>OPENAI_API_KEY</code> for OpenAI, choose the provider if needed, and restart ProofLedger. No simulated answer is shown while the model is unavailable.</>}</p>
                     </div>
                   </div>
                 ) : (
@@ -364,10 +388,18 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                           {message.role === "assistant" && <div className="message-avatar"><Bot size={15} /></div>}
                           <div className="message-content">
                             <p>{message.content}</p>
+                            {message.provider && (
+                              <span className="assistant-response-meta">
+                                <Sparkles size={11} /> {message.provider} · {message.model} · {message.latencyMs} ms
+                              </span>
+                            )}
                             {message.evidence && message.evidence.length > 0 && (
                               <div className="assistant-evidence-list" aria-label="Evidence used">
                                 {message.evidence.map((item) => (
-                                  <span title={item.detail} key={`${message.id}-${item.label}`}><ShieldCheck size={11} /> {item.label}</span>
+                                  <details className="assistant-evidence-item" key={`${message.id}-${item.label}`}>
+                                    <summary><ShieldCheck size={11} /> {item.label}</summary>
+                                    <p>{item.detail}</p>
+                                  </details>
                                 ))}
                               </div>
                             )}
@@ -388,7 +420,16 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                       ))}
                     </div>
 
-                    {error && <div className="assistant-error" role="alert">{error}</div>}
+                    {error && (
+                      <div className="assistant-error" role="alert">
+                        <span>{error}</span>
+                        {failedQuestion && status?.configured && (
+                          <button type="button" onClick={() => void ask(failedQuestion, true)} disabled={loadingAnswer}>
+                            <RotateCcw size={13} /> Retry
+                          </button>
+                        )}
+                      </div>
+                    )}
 
                     <form className="assistant-composer" onSubmit={submit}>
                       <label className="sr-only" htmlFor="global-assistant-question">Ask about the selected invoice</label>

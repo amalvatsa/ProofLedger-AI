@@ -89,8 +89,11 @@ export interface DemoSample {
 
 export interface AssistantStatus {
   configured: boolean;
+  provider_id: "openai" | "gemini" | null;
   provider: string | null;
   model: string;
+  thinking_level: "minimal" | "low" | "medium" | "high" | null;
+  configuration_error: string | null;
   scope: "selected_invoice_only";
   guardrails: string[];
 }
@@ -103,8 +106,10 @@ export interface AssistantEvidence {
 export interface AssistantReply {
   answer: string;
   evidence: AssistantEvidence[];
+  provider_id: "openai" | "gemini";
   provider: string;
   model: string;
+  latency_ms: number;
   scope: "selected_invoice_only";
   decision_snapshot: Decision;
 }

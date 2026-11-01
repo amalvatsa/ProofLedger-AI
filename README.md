@@ -38,15 +38,17 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Runtime uploads and SQLite 
 
 ### Enable the invoice AI assistant
 
-The application works without an LLM, but the receipt-grounded assistant requires a real OpenAI API credential. Copy the example configuration, add your key, and restart the application:
+The application works without an LLM. The receipt-grounded assistant supports the Google Gemini API and the OpenAI Responses API. Copy the example configuration, add one provider key, and restart the application:
 
 ```bash
 cp .env.example .env
-# Edit .env and set OPENAI_API_KEY, then:
+# Edit .env and set GEMINI_API_KEY or OPENAI_API_KEY, then:
 ./start.sh
 ```
 
-The assistant uses `gpt-6-luna` by default through the OpenAI Responses API. It receives only a constrained snapshot of the manually selected Decision Receipt, sends requests with API storage disabled, rejects unrelated and prompt-injection requests before the model call, and cannot change policy results or perform payment/posting actions. The UI distinguishes a key that is merely **configured** from a provider that has returned a **verified** live answer, and visibly reports rate limiting or provider failure. Set `PROOFLEDGER_LLM_MODEL` in `.env` to use another compatible model.
+With `PROOFLEDGER_LLM_PROVIDER=auto`, Gemini is selected when `GEMINI_API_KEY` is present; otherwise OpenAI is used. The default Gemini model is `gemini-3.6-flash` with minimal thinking, and the default OpenAI model is `gpt-6-luna`. Set `PROOFLEDGER_LLM_PROVIDER=gemini` to require Google explicitly. Gemini thinking levels are `minimal`, `low`, `medium`, or `high`.
+
+Both provider paths receive only a constrained snapshot of the manually selected Decision Receipt. Unrelated and prompt-injection requests are rejected before the model call, and the model cannot change policy results or perform payment/posting actions. OpenAI requests disable API storage. The UI distinguishes a key that is merely **configured** from a provider that has returned a **verified** live answer, shows the provider/model used for each answer, and visibly reports configuration, quota, rate-limit, safety-block, and provider failures.
 
 ### Windows PowerShell
 
@@ -92,11 +94,17 @@ npm run build
 With the application running, execute the reusable live-server verification:
 
 ```bash
-cd "/Users/vimalvatsa/Desktop/Amal Zamp"
+cd "/path/to/ProofLedger-AI"
 ./.venv/bin/python scripts/verify_live_application.py
 ```
 
 This uploads the happy path and all four featured exceptions to the real localhost API, verifies uploaded-byte hashes and persisted documents, checks every financial value and rule outcome, confirms the seven-event sequence, reopens History, checks the Review Queue, and proves that recommendations do not consume PO capacity.
+
+When a real provider key is configured, verify one grounded chatbot answer and its pre-provider prompt-injection guardrail:
+
+```bash
+PROOFLEDGER_EXPECTED_PROVIDER=gemini ./.venv/bin/python scripts/verify_live_assistant.py
+```
 
 The backend suite uses an isolated temporary SQLite database. It covers real machine-readable PDFs, normalized duplicates, cumulative PO capacity, inclusive tax, actual OCR or truthful unavailability, ambiguous/missing fields, embedded prompt injection, invalid PDFs, idempotent demo confirmation, events, notes, and persistent history.
 

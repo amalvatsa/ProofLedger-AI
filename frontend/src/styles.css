@@ -883,12 +883,21 @@ button, input, select, textarea { font: inherit; }
 .message-avatar { color: #4263eb; background: #eef2ff; }
 .message-content > p, .assistant-conversation-view .message-content > p { color: #1d2939; border-color: #e4e7ec; font-size: 13px; line-height: 1.58; }
 .assistant-message.user .message-content > p { background: #4263eb; border-color: #4263eb; }
-.assistant-evidence-list span { min-height: 26px; color: #3451c6; background: #eef2ff; border-color: #d7dfff; font-size: 12px; }
+.assistant-response-meta { display: flex; align-items: center; gap: 5px; margin: 7px 2px 0; color: #667085; font-size: 12px; }
+.assistant-response-meta svg { color: #4263eb; }
+.assistant-evidence-list { align-items: flex-start; }
+.assistant-evidence-item { min-height: 28px; overflow: hidden; color: #3451c6; background: #eef2ff; border: 1px solid #d7dfff; border-radius: 8px; font-size: 12px; }
+.assistant-evidence-item summary { min-height: 28px; display: flex; align-items: center; gap: 5px; padding: 0 8px; font-weight: 700; cursor: pointer; list-style: none; }
+.assistant-evidence-item summary::-webkit-details-marker { display: none; }
+.assistant-evidence-item[open] { width: 100%; }
+.assistant-evidence-item > p { margin: 0; padding: 8px 9px; color: #475467; background: white; border-top: 1px solid #d7dfff; font-size: 12px; line-height: 1.5; }
 .assistant-thinking { font-size: 12px; }
 .assistant-thinking span, .assistant-selector-loading span { background: #4263eb; }
 .assistant-quick-questions button, .assistant-conversation-view .assistant-quick-questions button { min-height: 32px; color: #475467; background: white; border-color: #d0d5dd; font-size: 12px; }
 .assistant-quick-questions button:hover:not(:disabled) { color: #3451c6; background: #eef2ff; border-color: #b8c5f3; }
-.assistant-error { padding: 9px 10px; font-size: 12px; }
+.assistant-error { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 10px; font-size: 12px; }
+.assistant-error > span { min-width: 0; }
+.assistant-error button { min-height: 29px; display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 0 9px; color: #9b3741; background: white; border: 1px solid #e7b8bd; border-radius: 7px; font-size: 12px; font-weight: 700; }
 .assistant-composer { border-color: #d0d5dd; box-shadow: 0 4px 14px rgba(16,29,50,.05); }
 .assistant-composer:focus-within { border-color: #8096ed; box-shadow: 0 0 0 3px rgba(66,99,235,.09); }
 .assistant-composer textarea, .assistant-conversation-view .assistant-composer textarea { font-size: 13px; }

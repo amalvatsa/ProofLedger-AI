@@ -407,25 +407,34 @@ def ask_invoice_assistant(
 
     status = get_assistant_status()
     if not status["configured"]:
+        configuration_error = status.get("configuration_error")
+        provider_key = "GEMINI_API_KEY" if status.get("provider_id") == "gemini" else "OPENAI_API_KEY"
         raise HTTPException(
             status_code=503,
-            detail="Invoice AI is not configured. Set OPENAI_API_KEY and restart the application.",
+            detail=(
+                configuration_error
+                or f"Invoice AI is not configured. Set {provider_key} and restart the application."
+            ),
         )
 
     context = build_invoice_context(serialize_run(run))
     history = [message.model_dump() for message in request.history]
+    started_at = time.perf_counter()
     try:
         answer = generate_invoice_answer(question, history, context)
     except AssistantUnavailable as error:
         raise HTTPException(status_code=503, detail=str(error)) from error
     except AssistantProviderError as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
+    latency_ms = max(1, round((time.perf_counter() - started_at) * 1000))
 
     return {
         "answer": answer,
         "evidence": evidence_references(question, context),
+        "provider_id": status["provider_id"],
         "provider": status["provider"],
         "model": status["model"],
+        "latency_ms": latency_ms,
         "scope": status["scope"],
         "decision_snapshot": run.decision,
     }
