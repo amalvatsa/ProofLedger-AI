@@ -34,15 +34,18 @@ export function ReviewQueuePage() {
     return matchesFilter && haystack.includes(query.trim().toLowerCase());
   }), [runs, filter, query]);
 
-  function reason(run: RunRecord): string {
+  function reason(run: RunRecord): { code: string; title: string } {
     const control = run.checks.find((item) => item.outcome !== "PASS");
-    return control?.rule_id || "SAFE_FAILURE";
+    return {
+      code: control?.rule_id || "SAFE_FAILURE",
+      title: control?.title || "Processing requires attention",
+    };
   }
 
   return (
     <div className="page-wrap">
       <div className="page-heading">
-        <div><span className="eyebrow">Exception workspace</span><h1>Review queue</h1><p>See exactly what needs attention and the next evidence-gathering action. There is no “approve anyway” shortcut.</p></div>
+        <div><span className="eyebrow">Exception workspace</span><h1>Review queue</h1><p>Understand why an invoice needs attention, inspect its evidence, and record the next review step.</p></div>
         <div className="queue-count"><strong>{runs.length}</strong><span>open exceptions</span></div>
       </div>
 
@@ -68,7 +71,7 @@ export function ReviewQueuePage() {
             <Link to={`/runs/${run.id}`} className="table-row queue-table-grid" key={run.id}>
               <div className="cell-primary"><div className="vendor-avatar">{(fields?.vendor_name || "?")[0]}</div><span><strong>{fields?.vendor_name || "Unmatched supplier"}</strong><small>{fields?.invoice_number || "Invoice number missing"}</small></span></div>
               <strong>{formatMoney(run.money.gross, run.money.currency || "INR")}</strong>
-              <span className="rule-chip">{reason(run)}</span>
+              <span className="reason-cell"><strong>{reason(run).title}</strong><small>{reason(run).code}</small></span>
               <span>{formatDate(run.created_at, false)}</span>
               <StatusBadge decision={run.decision as Decision} status={run.status} compact />
               <span className="inspect-link">Inspect <ArrowRight size={14} /></span>

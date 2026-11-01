@@ -347,7 +347,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                     <div>
                       <span className="eyebrow">Real model required</span>
                       <h4>Connect the invoice AI</h4>
-                      <p>Set <code>OPENAI_API_KEY</code> and restart ProofLedger. No simulated answer is shown while the model is unavailable.</p>
+                      <p>Set <code>OPENAI_API_KEY</code> or <code>GEMINI_API_KEY</code>, choose the provider if needed, and restart ProofLedger. No simulated answer is shown while the model is unavailable.</p>
                     </div>
                   </div>
                 ) : (

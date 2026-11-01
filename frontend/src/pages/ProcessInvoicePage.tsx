@@ -1,4 +1,4 @@
-import { ArrowLeft, FileText, LoaderCircle, RefreshCw, UploadCloud, WandSparkles, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCircle2, CopyCheck, FileSearch, FileText, LoaderCircle, ScanLine, UploadCloud, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { type DragEvent, useEffect, useRef, useState } from "react";
 import { api, apiUrl } from "../api";
@@ -8,7 +8,7 @@ import type { DemoSample, RunRecord } from "../types";
 
 export function ProcessInvoicePage() {
   const [samples, setSamples] = useState<DemoSample[]>([]);
-  const [sampleName, setSampleName] = useState("");
+  const [processingSample, setProcessingSample] = useState("");
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [run, setRun] = useState<RunRecord | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -17,10 +17,7 @@ export function ProcessInvoicePage() {
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    api.getSamples().then((data) => {
-      setSamples(data);
-      if (data.length) setSampleName(data[0].filename);
-    }).catch(() => setSamples([]));
+    api.getSamples().then(setSamples).catch(() => setSamples([]));
   }, []);
 
   useEffect(() => {
@@ -73,8 +70,9 @@ export function ProcessInvoicePage() {
     }
   }
 
-  async function processSample() {
-    if (!sampleName) return;
+  async function processSample(sampleName: string) {
+    if (!sampleName || uploading) return;
+    setProcessingSample(sampleName);
     setUploading(true);
     setError("");
     try {
@@ -87,6 +85,8 @@ export function ProcessInvoicePage() {
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The sample could not be processed.");
       setUploading(false);
+    } finally {
+      setProcessingSample("");
     }
   }
 
@@ -101,13 +101,22 @@ export function ProcessInvoicePage() {
     if (inputRef.current) inputRef.current.value = "";
   }
 
+  const scenarioPresentation: Record<string, { title: string; lesson: string; icon: typeof FileText; tone: string }> = {
+    "happy_path.pdf": { title: "Clean invoice", lesson: "See every control pass with enough PO capacity.", icon: CheckCircle2, tone: "success" },
+    "duplicate_invoice.pdf": { title: "Duplicate invoice", lesson: "Catch a formatting variation of a confirmed invoice.", icon: CopyCheck, tone: "blocked" },
+    "split_po_overspend.pdf": { title: "PO budget exceeded", lesson: "See cumulative commitments expose an exact overage.", icon: AlertTriangle, tone: "warning" },
+    "scanned_inclusive_tax.pdf": { title: "Scanned invoice", lesson: "Watch local OCR read an image-only document.", icon: ScanLine, tone: "blue" },
+    "ambiguous_po.pdf": { title: "Ambiguous PO", lesson: "See the system surface candidates without guessing.", icon: FileSearch, tone: "warning" },
+    "split_po_within_balance.pdf": { title: "Split PO within balance", lesson: "Verify a partial claim against remaining capacity.", icon: CheckCircle2, tone: "success" },
+  };
+
   return (
     <div className="page-wrap process-page">
-      <div className="page-heading">
+      <div className="page-heading process-heading">
         <div>
-          <span className="eyebrow">PDF to defensible decision</span>
-          <h1>{run ? "Your decision is ready" : "Process an invoice"}</h1>
-          <p>{run ? "Follow every backend event, then inspect the claims, source records, arithmetic, and control outcomes." : "Drop in a supplier PDF. ProofLedger reads the actual document, checks confirmed records, and saves an explainable recommendation."}</p>
+          <span className="eyebrow">PDF to evidence-backed decision</span>
+          <h1>{run ? "Decision receipt" : "Process an invoice"}</h1>
+          <p>{run ? "Trace the recorded workflow, compare the supplier claim with company records, and understand the saved recommendation." : "Upload a supplier PDF or run a prepared scenario through the same real verification workflow."}</p>
         </div>
         {run && <button className="secondary-button" onClick={reset}><ArrowLeft size={16} /> Process another</button>}
       </div>
@@ -116,8 +125,12 @@ export function ProcessInvoicePage() {
 
       <AnimatePresence mode="wait">
         {!run ? (
-          <motion.div key="upload" className="upload-layout" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+          <motion.div key="upload" className="upload-experience" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
             <section className="upload-card">
+              <div className="upload-card-heading">
+                <div><span className="step-number">1</span><div><strong>Upload an invoice PDF</strong><span>We store and process the actual document bytes.</span></div></div>
+                <span className="secure-label">Local demo storage</span>
+              </div>
               <div
                 className={`drop-zone ${dragging ? "dragging" : ""} ${selectedFile ? "has-file" : ""}`}
                 onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
@@ -129,45 +142,51 @@ export function ProcessInvoicePage() {
                 <div className="upload-icon">{selectedFile ? <FileText size={31} /> : <UploadCloud size={31} />}</div>
                 {selectedFile ? (
                   <>
+                    <span className="file-ready-label"><CheckCircle2 size={14} /> PDF ready</span>
                     <strong>{selectedFile.name}</strong>
-                    <span>{(selectedFile.size / 1024).toFixed(1)} KB · Ready to send through the real upload API</span>
+                    <span>{(selectedFile.size / 1024).toFixed(1)} KB · Ready for evidence-backed verification</span>
                     <div className="drop-actions">
                       <button className="ghost-button" onClick={() => inputRef.current?.click()}>Choose another</button>
-                      <button className="primary-button" onClick={() => upload(selectedFile, "manual-upload")} disabled={uploading}>{uploading ? <><LoaderCircle className="spin" size={17} /> Processing…</> : <>Process invoice <UploadCloud size={17} /></>}</button>
+                      <button className="primary-button" onClick={() => upload(selectedFile, "manual-upload")} disabled={uploading}>{uploading ? <><LoaderCircle className="spin" size={17} /> Verifying invoice…</> : <>Process Invoice <ArrowRight size={17} /></>}</button>
                     </div>
                   </>
                 ) : (
                   <>
-                    <strong>Drop your invoice here</strong>
-                    <span>PDF only · Up to 10 MB · Your file is stored locally for this demo</span>
-                    <button className="secondary-button" onClick={() => inputRef.current?.click()}>Browse PDF</button>
+                    <strong>Drop your invoice PDF here</strong>
+                    <span>or choose a file from your computer</span>
+                    <button className="secondary-button" onClick={() => inputRef.current?.click()}><UploadCloud size={17} /> Browse PDF</button>
+                    <small>PDF only · Maximum 10 MB · Never upload real customer data</small>
                   </>
                 )}
               </div>
-
-              <div className="privacy-line"><span className="demo-dot" /> Synthetic demo environment · Never upload real customer data</div>
             </section>
 
-            <aside className="sample-card">
-              <div className="sample-icon"><WandSparkles size={21} /></div>
-              <span className="eyebrow">Prepared demo cases</span>
-              <h2>Try a real sample PDF</h2>
-              <p>The picker only selects a genuine file. Every sample travels through the exact same upload and processing API.</p>
-              <label htmlFor="sample-select">Sample case</label>
-              <select id="sample-select" value={sampleName} onChange={(event) => setSampleName(event.target.value)}>
-                {samples.map((sample) => <option key={sample.filename} value={sample.filename}>{sample.label}</option>)}
-              </select>
-              {samples.find((sample) => sample.filename === sampleName) && (
-                <div className="sample-description">
-                  <strong>Expected safe outcome</strong>
-                  <span>{samples.find((sample) => sample.filename === sampleName)?.expected}</span>
-                  <p>{samples.find((sample) => sample.filename === sampleName)?.description}</p>
-                </div>
-              )}
-              <button className="primary-button full-button" onClick={processSample} disabled={uploading || !sampleName}>
-                {uploading ? <><LoaderCircle className="spin" size={17} /> Processing actual PDF…</> : <>Process this sample <RefreshCw size={16} /></>}
-              </button>
-            </aside>
+            <section className="scenario-section">
+              <div className="scenario-heading">
+                <div><span className="step-number">2</span><div><strong>Or explore a prepared scenario</strong><span>Each card uploads a genuine PDF through the same API.</span></div></div>
+                <span>{samples.length} verified samples</span>
+              </div>
+              <div className="scenario-grid">
+                {samples.map((sample) => {
+                  const presentation = scenarioPresentation[sample.filename] || { title: sample.label, lesson: sample.description, icon: FileText, tone: "blue" };
+                  const ScenarioIcon = presentation.icon;
+                  const isProcessing = processingSample === sample.filename;
+                  return (
+                    <button
+                      type="button"
+                      className={`scenario-card scenario-${presentation.tone}`}
+                      key={sample.filename}
+                      onClick={() => void processSample(sample.filename)}
+                      disabled={uploading}
+                    >
+                      <span className="scenario-icon">{isProcessing ? <LoaderCircle className="spin" size={20} /> : <ScenarioIcon size={20} />}</span>
+                      <span className="scenario-copy"><strong>{presentation.title}</strong><small>{presentation.lesson}</small></span>
+                      <ArrowRight className="scenario-arrow" size={16} />
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
           </motion.div>
         ) : (
           <motion.div key="result" className="result-stack" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>

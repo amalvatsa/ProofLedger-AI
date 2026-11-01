@@ -4,16 +4,20 @@ import {
   Check,
   CheckCircle2,
   ChevronDown,
+  ClipboardCheck,
   CircleSlash2,
+  Copy,
   FileText,
   Landmark,
   MessageSquareText,
+  Printer,
   ScanLine,
   ShieldCheck,
   X,
 } from "lucide-react";
 import { motion } from "motion/react";
-import { type FormEvent, useMemo, useState } from "react";
+import { type FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 import { api, apiUrl, formatDate, formatMoney } from "../api";
 import type { PolicyCheck, RunRecord } from "../types";
 import { StatusBadge } from "./StatusBadge";
@@ -24,13 +28,26 @@ function CheckIcon({ check }: { check: PolicyCheck }) {
   return <AlertTriangle size={15} />;
 }
 
+function comparisonMoney(value: string | null | undefined, currency = "INR"): string {
+  return value === null || value === undefined || value === "" ? "Not available" : formatMoney(value, currency);
+}
+
 export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => Promise<void> | void }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [note, setNote] = useState("");
   const [savingNote, setSavingNote] = useState(false);
   const [actionError, setActionError] = useState("");
+  const [copied, setCopied] = useState(false);
+  const [evidenceExpanded, setEvidenceExpanded] = useState(false);
+  const [sourcePreviewState, setSourcePreviewState] = useState<"checking" | "available" | "missing">(run.document_url ? "checking" : "missing");
+  const evidenceRef = useRef<HTMLDivElement>(null);
   const fields = run.extracted.fields;
+  const vendorCheck = run.checks.find((item) => item.rule_id === "V001_APPROVED_VENDOR");
+  const poCheck = run.checks.find((item) => item.rule_id === "P001_PO_MATCH");
+  const totalCheck = run.checks.find((item) => item.rule_id === "T001_TOTAL_RECONCILIATION");
+  const duplicateCheck = run.checks.find((item) => item.rule_id === "D001_DUPLICATE");
+  const passedChecks = run.checks.filter((item) => item.outcome === "PASS").length;
 
   const balancePercent = useMemo(() => {
     const authorized = Number(run.money.authorized || 0);
@@ -38,6 +55,26 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
     if (!authorized) return 0;
     return Math.min((committed / authorized) * 100, 100);
   }, [run.money.authorized, run.money.committed]);
+
+  useEffect(() => {
+    if (!run.document_url) {
+      setSourcePreviewState("missing");
+      return;
+    }
+
+    const controller = new AbortController();
+    setSourcePreviewState("checking");
+    fetch(apiUrl(run.document_url), {
+      headers: { Range: "bytes=0-0" },
+      signal: controller.signal,
+    })
+      .then((response) => setSourcePreviewState(response.ok ? "available" : "missing"))
+      .catch((error: unknown) => {
+        if (!(error instanceof DOMException && error.name === "AbortError")) setSourcePreviewState("missing");
+      });
+
+    return () => controller.abort();
+  }, [run.document_url]);
 
   async function confirmLedger() {
     setConfirming(true);
@@ -69,6 +106,36 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
     }
   }
 
+  async function copyDecisionSummary() {
+    const summary = [
+      "ProofLedger Decision Receipt",
+      `Invoice: ${fields?.invoice_number || "Not available"}`,
+      `Supplier: ${fields?.vendor_name || fields?.vendor_id || "Not available"}`,
+      `Invoice date: ${fields?.issue_date || "Not available"}`,
+      `Gross amount: ${formatMoney(run.money.gross, run.money.currency || "INR")}`,
+      `Purchase order: ${run.matched_po_number || fields?.po_reference || "Not available"}`,
+      `Recommendation: ${run.decision?.replaceAll("_", " ") || "Not available"}`,
+      `Evidence checks: ${passedChecks}/${run.checks.length} passed`,
+      `Reason: ${run.explanation || "Not available"}`,
+      `Next action: ${run.next_action || "Not available"}`,
+      `Receipt ID: ${run.id}`,
+    ].join("\n");
+    try {
+      await navigator.clipboard.writeText(summary);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setActionError("The decision summary could not be copied in this browser.");
+    }
+  }
+
+  function toggleEvidence() {
+    const details = Array.from(evidenceRef.current?.querySelectorAll("details") || []);
+    const expand = details.some((item) => !item.open);
+    details.forEach((item) => { item.open = expand; });
+    setEvidenceExpanded(expand);
+  }
+
   if (run.status === "FAILED") {
     return (
       <section className="failure-card">
@@ -87,11 +154,17 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
     <motion.section className="receipt" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.24 }}>
       <div className="receipt-header">
         <div>
-          <span className="eyebrow">Decision receipt · {run.id.slice(0, 8)}</span>
+          <span className="eyebrow"><ClipboardCheck size={14} /> Decision receipt · {run.id.slice(0, 8)}</span>
           <h2>{fields?.vendor_name || fields?.vendor_id || "Unmatched supplier"}</h2>
           <p>{fields?.invoice_number || "Invoice number missing"} · Processed {formatDate(run.updated_at)}</p>
         </div>
-        <StatusBadge decision={run.decision} status={run.status} />
+        <div className="receipt-header-actions">
+          <StatusBadge decision={run.decision} status={run.status} />
+          <div className="receipt-utility-actions" aria-label="Decision receipt actions">
+            <button type="button" className="utility-button" onClick={() => void copyDecisionSummary()}><Copy size={15} /> {copied ? "Copied" : "Copy summary"}</button>
+            <button type="button" className="utility-button" onClick={() => window.print()}><Printer size={15} /> Print</button>
+          </div>
+        </div>
       </div>
 
       <div className="receipt-decision-grid">
@@ -102,15 +175,51 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
           <div>
             <span className="eyebrow">Recommendation—not a payment</span>
             <h3>{run.explanation}</h3>
-            <div className="next-action"><ArrowRight size={17} /><span><strong>Next action</strong>{run.next_action}</span></div>
           </div>
         </div>
         <div className="amount-card">
-          <span>Invoice claims</span>
+          <span>Supplier invoice total</span>
           <strong>{formatMoney(run.money.gross, run.money.currency || "INR")}</strong>
-          <small>Gross · Net {formatMoney(run.money.net, run.money.currency || "INR")}</small>
+          <small>Net {formatMoney(run.money.net, run.money.currency || "INR")} · Tax {formatMoney(run.money.tax, run.money.currency || "INR")}</small>
         </div>
       </div>
+
+      <div className={`next-action next-action-${run.decision?.toLowerCase()}`}>
+        <span className="next-action-icon"><ArrowRight size={18} /></span>
+        <span><strong>Recommended next action</strong>{run.next_action || "Review the saved evidence before continuing."}</span>
+      </div>
+
+      <section className="reconciliation-section" aria-labelledby={`reconciliation-${run.id}`}>
+        <div className="section-heading-row reconciliation-heading">
+          <div><span className="eyebrow">Claim-to-record reconciliation</span><h3 id={`reconciliation-${run.id}`}>What the supplier submitted vs. what the company authorized</h3></div>
+          <span className="reconciliation-summary"><ShieldCheck size={15} /> {passedChecks} of {run.checks.length} controls passed</span>
+        </div>
+        <div className="reconciliation-grid">
+          <article className="comparison-card supplier-claim-card">
+            <div className="comparison-card-heading"><span className="comparison-icon"><FileText size={19} /></span><div><span>Supplier evidence</span><strong>Invoice claim</strong></div></div>
+            <dl className="comparison-list">
+              <div><dt>Supplier</dt><dd>{fields?.vendor_name || fields?.vendor_id || "Not available"}</dd></div>
+              <div><dt>Invoice number</dt><dd>{fields?.invoice_number || "Not available"}</dd></div>
+              <div><dt>Invoice date</dt><dd>{fields?.issue_date || "Not available"}</dd></div>
+              <div><dt>Gross amount</dt><dd>{comparisonMoney(fields?.gross_total, fields?.currency || "INR")}</dd></div>
+              <div><dt>Tax amount</dt><dd>{comparisonMoney(fields?.tax_amount, fields?.currency || "INR")}</dd></div>
+              <div><dt>Claimed PO</dt><dd>{fields?.po_reference || "Not available"}</dd></div>
+            </dl>
+          </article>
+
+          <article className="comparison-card company-record-card">
+            <div className="comparison-card-heading"><span className="comparison-icon"><Landmark size={19} /></span><div><span>Authoritative evidence</span><strong>Company records</strong></div></div>
+            <dl className="comparison-list">
+              <div><dt>Approved supplier</dt><dd className={vendorCheck?.outcome === "PASS" ? "verified-value" : "attention-value"}>{vendorCheck?.outcome === "PASS" ? fields?.vendor_name || fields?.vendor_id || "Not available" : "Not available"}</dd></div>
+              <div><dt>Matched PO</dt><dd className={poCheck?.outcome === "PASS" ? "verified-value" : "attention-value"}>{run.matched_po_number || "Not available"}</dd></div>
+              <div><dt>PO authorized net</dt><dd>{comparisonMoney(run.money.authorized, run.money.currency || "INR")}</dd></div>
+              <div><dt>Previously committed</dt><dd>{comparisonMoney(run.money.committed, run.money.currency || "INR")}</dd></div>
+              <div><dt>Remaining before invoice</dt><dd>{comparisonMoney(run.money.remaining, run.money.currency || "INR")}</dd></div>
+              <div><dt>Validation</dt><dd className={duplicateCheck?.outcome === "FAIL" || totalCheck?.outcome !== "PASS" ? "attention-value" : "verified-value"}>{duplicateCheck?.outcome === "FAIL" ? "Confirmed duplicate found" : totalCheck?.outcome === "PASS" ? "Totals reconciled" : "Requires review"}</dd></div>
+            </dl>
+          </article>
+        </div>
+      </section>
 
       {run.matched_po_number && (
         <div className="po-balance-card">
@@ -139,17 +248,21 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
       <div className="receipt-columns">
         <div className="document-panel">
           <div className="panel-heading"><span><FileText size={17} /> Source invoice</span><span>{run.extracted.page_count || 1} page</span></div>
-          {run.document_url ? (
+          {run.document_url && sourcePreviewState === "available" ? (
             <iframe title={`Source invoice ${fields?.invoice_number || run.id}`} src={apiUrl(run.document_url)} />
           ) : (
-            <div className="document-placeholder"><FileText /><span>Open the full receipt to preview the source PDF.</span></div>
+            <div className="document-placeholder">
+              <FileText />
+              <strong>{sourcePreviewState === "checking" ? "Checking source PDF…" : "Source PDF unavailable on this machine"}</strong>
+              <span>{sourcePreviewState === "checking" ? "The preview will appear when the file is ready." : "The saved receipt and extracted evidence remain available for review."}</span>
+            </div>
           )}
           <div className="extraction-chip"><ScanLine size={14} /> Extracted via {run.extraction_method === "ocr" ? "local Tesseract OCR" : "embedded PDF text"}</div>
         </div>
 
         <div className="evidence-panel">
-          <div className="panel-heading"><span><ShieldCheck size={17} /> Evidence checks</span><span>{run.checks.filter((item) => item.outcome === "PASS").length}/{run.checks.length} passed</span></div>
-          <div className="check-list">
+          <div className="panel-heading"><span><ShieldCheck size={17} /> Evidence checks</span><button type="button" className="panel-action" onClick={toggleEvidence}>{evidenceExpanded ? "Collapse all" : "Expand all"}</button></div>
+          <div className="check-list" ref={evidenceRef}>
             {run.checks.map((item) => (
               <details className={`check-row check-${item.outcome.toLowerCase()}`} key={item.rule_id}>
                 <summary>
@@ -187,6 +300,7 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
       {actionError && <div className="inline-error" role="alert">{actionError}</div>}
 
       <div className="receipt-actions">
+        <Link className="secondary-button print-hidden" to="/history">Back to History</Link>
         {run.decision === "READY_FOR_POSTING" && (
           <button className="primary-button" onClick={() => setConfirmOpen(true)} disabled={Boolean(run.confirmed_at)}>
             <CheckCircle2 size={17} /> {run.confirmed_at ? "Confirmed in demo ledger" : "Confirm as processed (demo ledger)"}

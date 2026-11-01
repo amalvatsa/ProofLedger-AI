@@ -1,4 +1,4 @@
-import { ArrowRight, CheckCircle2, Database, History, Search, X } from "lucide-react";
+import { ArrowRight, Database, History, Search, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { useEffect, useMemo, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -16,6 +16,10 @@ export function HistoryPage() {
   const [error, setError] = useState("");
   const requestedDecision = searchParams.get("decision");
   const decisionFilter = requestedDecision === "READY_FOR_POSTING" || requestedDecision === "NEEDS_REVIEW" || requestedDecision === "BLOCKED" ? requestedDecision : null;
+
+  function changeDecisionFilter(decision: string | null) {
+    setSearchParams(decision ? { decision } : {});
+  }
 
   useEffect(() => {
     Promise.all([api.getRuns("limit=200"), api.getLedger()])
@@ -42,11 +46,17 @@ export function HistoryPage() {
 
       <div className="toolbar-card history-toolbar">
         <label className="search-field wide"><Search size={17} /><span className="sr-only">Search history</span><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search supplier, invoice ID, filename, or status" /></label>
-        {decisionFilter ? (
-          <button className="active-filter-pill" onClick={() => setSearchParams({})} aria-label="Clear decision filter">
-            <CheckCircle2 size={14} /> Ready for posting <X size={13} />
-          </button>
-        ) : <span>{visible.length} run{visible.length === 1 ? "" : "s"}</span>}
+        <div className="segmented-control history-filters" aria-label="Filter run history">
+          {[
+            [null, "All"],
+            ["READY_FOR_POSTING", "Ready"],
+            ["NEEDS_REVIEW", "Needs review"],
+            ["BLOCKED", "Blocked"],
+          ].map(([value, label]) => (
+            <button key={label} className={decisionFilter === value ? "active" : ""} onClick={() => changeDecisionFilter(value)}>{label}</button>
+          ))}
+        </div>
+        <span className="result-count">{visible.length} run{visible.length === 1 ? "" : "s"}</span>
       </div>
       {error && <div className="inline-error" role="alert">{error}</div>}
 

@@ -22,12 +22,13 @@ export function AppShell() {
           </div>
           <div>
             <div className="brand-name">ProofLedger</div>
-            <div className="brand-subtitle">Evidence to decision</div>
+            <div className="brand-subtitle">AI finance operations</div>
           </div>
         </div>
 
-        <div className="demo-pill"><span className="demo-dot" /> Synthetic demo data</div>
+        <div className="demo-pill"><span className="demo-dot" /> Synthetic workspace</div>
 
+        <span className="nav-section-label">Workspace</span>
         <nav className="nav-list">
           {navItems.map(({ to, label, icon: Icon, end }) => (
             <NavLink
@@ -50,15 +51,15 @@ export function AppShell() {
           aria-controls="invoice-assistant-drawer"
         >
           <span className="assistant-launch-icon"><BrainCircuit size={19} /></span>
-          <span><strong>Invoice AI</strong><small>Select a receipt to chat</small></span>
+          <span><strong>Invoice AI</strong><small>Explain a saved decision</small></span>
           <Sparkles size={14} />
         </button>
 
         <div className="sidebar-trust">
           <ShieldCheck size={19} />
           <div>
-            <strong>Controls stay deterministic</strong>
-            <span>AI never overrides financial policy.</span>
+            <strong>Policy stays authoritative</strong>
+            <span>AI explains evidence. It never approves payment.</span>
           </div>
         </div>
       </aside>

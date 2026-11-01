@@ -34,21 +34,24 @@ export function OverviewPage() {
   return (
     <div className="page-wrap">
       <section className="overview-hero">
-        <div>
-          <span className="eyebrow"><Sparkles size={14} /> Evidence-to-decision workbench</span>
-          <h1>Your invoice command center</h1>
-          <p>Turn supplier PDFs into explainable recommendations backed by purchase orders, confirmed history, and visible policy checks.</p>
-          <Link to="/process" className="primary-button hero-cta">Process an invoice <ArrowRight size={17} /></Link>
+        <div className="overview-hero-copy">
+          <span className="eyebrow"><Sparkles size={14} /> Accounts payable control center</span>
+          <h1>Every invoice gets a decision. Every decision has proof.</h1>
+          <p>From invoice PDF to evidence-backed financial decision.</p>
+          <Link to="/process" className="primary-button hero-cta">Process an Invoice <ArrowRight size={17} /></Link>
         </div>
         <div className="hero-proof-card">
-          <div className="proof-orbit"><ShieldCheck size={28} /></div>
-          <span>Every decision has proof</span>
-          <strong>Invoice claim</strong>
-          <div className="proof-line" />
-          <strong>Authoritative ledger</strong>
-          <div className="proof-line" />
-          <strong>Deterministic controls</strong>
-          <small>No payment or ERP execution</small>
+          <div className="proof-orbit"><ShieldCheck size={25} /></div>
+          <div>
+            <span>Financial control model</span>
+            <strong>Claims are checked against company records before a recommendation is saved.</strong>
+          </div>
+          <ul>
+            <li><CheckCircle2 size={15} /> Vendor and PO authority</li>
+            <li><CheckCircle2 size={15} /> Duplicate and balance controls</li>
+            <li><CheckCircle2 size={15} /> Transparent evidence trail</li>
+          </ul>
+          <small>Recommendations only · No payment execution</small>
         </div>
       </section>
 
@@ -95,9 +98,9 @@ export function OverviewPage() {
         </div>
 
         <aside className="content-card controls-card">
-          <span className="eyebrow">How decisions are made</span>
-          <h2>Claims meet controls</h2>
-          <p>The invoice is evidence of what a supplier claims. Approval and budget always come from confirmed source records.</p>
+          <span className="eyebrow">How ProofLedger works</span>
+          <h2>From claim to control</h2>
+          <p>Supplier claims are compared with approved records, confirmed commitments, and explicit policy rules.</p>
           <ol className="controls-list">
             <li><span>1</span><div><strong>Read the document</strong><small>Embedded text or truthful OCR fallback</small></div></li>
             <li><span>2</span><div><strong>Match authority</strong><small>Approved vendor, exact PO, currency</small></div></li>
