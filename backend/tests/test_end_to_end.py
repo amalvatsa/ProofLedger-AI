@@ -208,6 +208,71 @@ def test_source_supported_tax_mismatch_is_blocked(client, tmp_path):
     assert check_by_id(run, "T001_TOTAL_RECONCILIATION")["outcome"] == "FAIL"
 
 
+def test_supplier_identity_states_are_defensible(client, tmp_path):
+    unknown = generate_and_upload(
+        client,
+        tmp_path,
+        "unknown-vendor.pdf",
+        invoice_number="UNKNOWN-VENDOR-1",
+        vendor="Unlisted Supplier Ltd",
+        vendor_id="VEND-UNLISTED",
+    )
+    id_only = generate_and_upload(
+        client,
+        tmp_path,
+        "id-only-vendor.pdf",
+        invoice_number="ID-ONLY-1",
+        vendor="",
+        vendor_id="VEND-ACME",
+    )
+    minor_difference = generate_and_upload(
+        client,
+        tmp_path,
+        "minor-name-difference.pdf",
+        invoice_number="MINOR-NAME-1",
+        vendor="Acme Office Systems Pvt Ltd",
+        vendor_id="VEND-ACME",
+    )
+
+    for run in (unknown, id_only, minor_difference):
+        assert run["decision"] == "NEEDS_REVIEW"
+        assert check_by_id(run, "V001_APPROVED_VENDOR")["outcome"] == "REVIEW"
+        assert check_by_id(run, "P001_PO_MATCH")["outcome"] == "REVIEW"
+
+
+def test_authoritatively_inactive_supplier_is_blocked(client, tmp_path):
+    run = generate_and_upload(
+        client,
+        tmp_path,
+        "inactive-vendor.pdf",
+        invoice_number="INACTIVE-1",
+        vendor="Dormant Trading Co",
+        vendor_id="VEND-DORMANT",
+        po="",
+    )
+
+    assert run["decision"] == "BLOCKED"
+    assert check_by_id(run, "V001_APPROVED_VENDOR")["outcome"] == "FAIL"
+    assert "inactive" in run["explanation"].lower()
+
+
+def test_verified_supplier_po_ownership_mismatch_is_blocked(client, tmp_path):
+    run = generate_and_upload(
+        client,
+        tmp_path,
+        "supplier-po-mismatch.pdf",
+        invoice_number="MISMATCH-1",
+        vendor="Nova Industrial Supplies",
+        vendor_id="VEND-NOVA",
+        po="PO-1001",
+    )
+
+    assert run["decision"] == "BLOCKED"
+    assert check_by_id(run, "V001_APPROVED_VENDOR")["outcome"] == "PASS"
+    assert check_by_id(run, "P001_PO_MATCH")["outcome"] == "FAIL"
+    assert "authoritative owner" in check_by_id(run, "P001_PO_MATCH")["detail"]
+
+
 def test_invalid_pdf_fails_with_persisted_diagnostic(client):
     response = client.post(
         "/api/runs",

@@ -87,17 +87,49 @@ def _primary_hard_failure(checks: list[dict[str, Any]]) -> dict[str, Any] | None
     return next((failures[rule_id] for rule_id in HARD_FAILURE_PRIORITY if rule_id in failures), None)
 
 
-def _find_vendor(session: Session, fields: dict[str, Any]) -> Vendor | None:
-    if fields.get("vendor_id"):
-        vendor = session.query(Vendor).filter(func.upper(Vendor.vendor_id) == fields["vendor_id"].upper()).first()
-        if vendor:
-            return vendor
-    if fields.get("vendor_name"):
-        target = " ".join(fields["vendor_name"].upper().split())
-        for vendor in session.query(Vendor).all():
-            if " ".join(vendor.name.upper().split()) == target:
-                return vendor
-    return None
+def _normalized_vendor_name(value: str | None) -> str:
+    return " ".join((value or "").casefold().split())
+
+
+@dataclass
+class VendorResolution:
+    vendor: Vendor | None
+    verified: bool
+    detail: str
+
+
+def _resolve_vendor(session: Session, fields: dict[str, Any]) -> VendorResolution:
+    claimed_name = fields.get("vendor_name")
+    claimed_id = fields.get("vendor_id")
+    name_vendor = None
+    id_vendor = None
+
+    if claimed_name:
+        normalized_name = _normalized_vendor_name(claimed_name)
+        name_vendor = next(
+            (vendor for vendor in session.query(Vendor).all() if _normalized_vendor_name(vendor.name) == normalized_name),
+            None,
+        )
+    if claimed_id:
+        id_vendor = session.query(Vendor).filter(func.upper(Vendor.vendor_id) == claimed_id.upper()).first()
+
+    if name_vendor and claimed_id and id_vendor and name_vendor.vendor_id == id_vendor.vendor_id:
+        return VendorResolution(name_vendor, True, "Invoice name and vendor ID agree with the authoritative vendor master.")
+    if name_vendor and not claimed_id:
+        return VendorResolution(name_vendor, True, "Invoice supplier name exactly matches the authoritative vendor master.")
+    if name_vendor and claimed_id:
+        return VendorResolution(
+            name_vendor,
+            False,
+            "The supplier name matches a vendor-master record, but the claimed internal vendor ID conflicts or is unknown.",
+        )
+    if id_vendor:
+        return VendorResolution(
+            id_vendor,
+            False,
+            "The claimed internal vendor ID exists, but the supplier name does not independently verify the same identity.",
+        )
+    return VendorResolution(None, False, "The claimed supplier could not be matched exactly to the authoritative vendor master.")
 
 
 def _committed_net(session: Session, po_number: str) -> Decimal:
@@ -132,19 +164,21 @@ class PolicyResult:
 
 def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[str, Any]) -> PolicyResult:
     checks: list[dict[str, Any]] = []
-    vendor = _find_vendor(session, fields)
+    vendor_resolution = _resolve_vendor(session, fields)
+    vendor = vendor_resolution.vendor
+    vendor_verified = vendor_resolution.verified
 
-    if vendor and vendor.status == "ACTIVE":
+    if vendor and vendor_verified and vendor.status == "ACTIVE":
         checks.append(
             check(
                 "V001_APPROVED_VENDOR",
                 "Approved vendor",
                 "PASS",
-                f"{vendor.name} is active in the approved-vendor master.",
-                {"vendor_id": vendor.vendor_id, "source": "vendor master"},
+                f"{vendor.name} is active in the approved-vendor master, and the invoice identity matches authoritative records.",
+                {"vendor_id": vendor.vendor_id, "source": "vendor master", "identity_basis": vendor_resolution.detail},
             )
         )
-    elif vendor:
+    elif vendor and vendor_verified:
         vendor_supported = _field_supported(
             extraction,
             "vendor_name" if fields.get("vendor_name") else "vendor_id",
@@ -159,7 +193,21 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
                     if vendor_supported
                     else f"{vendor.name} may be inactive, but the invoice identity evidence is not reliable enough to block automatically."
                 ),
-                {"vendor_id": vendor.vendor_id, "status": vendor.status},
+                {"vendor_id": vendor.vendor_id, "status": vendor.status, "identity_basis": vendor_resolution.detail},
+            )
+        )
+    elif vendor:
+        checks.append(
+            check(
+                "V001_APPROVED_VENDOR",
+                "Approved vendor",
+                "REVIEW",
+                vendor_resolution.detail,
+                {
+                    "claimed_vendor": fields.get("vendor_name"),
+                    "claimed_vendor_id": fields.get("vendor_id"),
+                    "possible_vendor_id": vendor.vendor_id,
+                },
             )
         )
     else:
@@ -168,8 +216,8 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
                 "V001_APPROVED_VENDOR",
                 "Approved vendor",
                 "REVIEW",
-                "The claimed supplier could not be matched to the approved-vendor master.",
-                {"claimed_vendor": fields.get("vendor_name")},
+                vendor_resolution.detail,
+                {"claimed_vendor": fields.get("vendor_name"), "claimed_vendor_id": fields.get("vendor_id")},
             )
         )
 
@@ -198,7 +246,7 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         matched_po = session.query(PurchaseOrder).filter(func.upper(PurchaseOrder.po_number) == po_reference.upper()).first()
         if not matched_po:
             po_outcome, po_detail = "REVIEW", f"PO {po_reference} does not exist in the confirmed PO ledger."
-        elif not vendor:
+        elif not vendor or not vendor_verified:
             po_outcome, po_detail = "REVIEW", f"PO {matched_po.po_number} exists, but the supplier identity is not verified."
         elif matched_po.vendor_id != vendor.vendor_id:
             reliable_mismatch = _field_supported(
@@ -231,7 +279,7 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         else:
             po_outcome, po_detail = "PASS", f"Exact PO {matched_po.po_number} matches supplier and currency."
     else:
-        if vendor:
+        if vendor and vendor_verified:
             candidate_pos = [
                 po.po_number
                 for po in session.query(PurchaseOrder)
@@ -302,7 +350,7 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
 
     duplicate: ConfirmedInvoice | None = None
     normalized = normalize_invoice_number(fields.get("invoice_number") or "")
-    if vendor and normalized:
+    if vendor and vendor_verified and normalized:
         duplicate = (
             session.query(ConfirmedInvoice)
             .filter(
@@ -446,6 +494,6 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
             "remaining": money_text(remaining),
             "exceeded": money_text(exceeded),
         },
-        vendor_id=vendor.vendor_id if vendor else None,
+        vendor_id=vendor.vendor_id if vendor and vendor_verified else None,
         candidate_pos=candidate_pos,
     )
