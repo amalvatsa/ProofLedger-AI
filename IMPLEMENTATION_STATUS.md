@@ -31,27 +31,35 @@ Phases 1–5 complete for the local/Docker case-study prototype. The verified pr
 
 ## Verification results
 
-- `./.venv/bin/python -m pytest -q` — **105 passed** on 2026-11-02, including **46 dedicated assistant and guardrail tests** plus guarded extraction-fallback coverage.
-- `cd frontend && npm run typecheck` — **passed** on 2026-11-01.
-- `cd frontend && npm run build` — **passed** on 2026-11-01 with Vite 6.4.5: 1,946 modules transformed; production assets emitted successfully in 1.65s.
+- `./.venv/bin/python -m pytest -q` — **119 passed** on 2026-11-02, including assistant guardrails, strict financial severity, ledger integrity, and guarded extraction-fallback coverage.
+- `cd frontend && npm run typecheck` — **passed** on 2026-11-02.
+- `cd frontend && npm run build` — **passed** on 2026-11-02 with Vite 6.4.5 and 1,946 modules transformed.
 - Local production health: `GET /api/health` returned **HTTP 200** with SQLite healthy and Tesseract available; `/` returned **HTTP 200** with the built frontend.
 - Browser smoke test: the happy-path PDF was uploaded through the UI and returned `READY_FOR_POSTING` with 7/7 controls, source preview, real events, and INR 75,000 remaining.
-- Browser exception test: cumulative split-PO invoice returned `NEEDS_REVIEW` with INR 30,000 remaining and an exact INR 5,000 overage under `B001_PO_REMAINING`.
+- Strict-budget exception: cumulative split-PO invoice returns `BLOCKED` with INR 30,000 remaining and an exact INR 5,000 overage under `B001_PO_REMAINING`.
 - Browser persistence test: reviewer note saved, Review Queue populated, History survived refresh, the receipt reopened by run ID, and the PO ledger showed confirmed/remaining values.
 - Browser console check after the end-to-end flow: **0 errors and 0 warnings**.
-- Verified fixture outcomes: clean and within-balance split → Ready; normalized duplicate → Blocked; cumulative overspend and ambiguous PO → Needs Review; image-only inclusive-tax scan → Ready when local OCR succeeds.
+- Verified fixture outcomes: clean and within-balance split → Ready; normalized duplicate and cumulative overspend → Blocked; ambiguous PO → Needs Review; image-only inclusive-tax scan → Ready when local OCR succeeds.
 
 ### Latest extraction fallback verification — 2026-11-02
 
 - Added an explicitly opt-in structured extraction fallback for unfamiliar invoice layouts. Embedded text and Tesseract OCR still run first, and complete deterministic results do not call an external model.
 - The fallback can fill only missing or ambiguous fields, requires page-linked verbatim evidence for every accepted value, preserves nulls for unknowns, and cannot replace deterministic fields or alter policy outcomes.
-- Field types, dates, currencies, bounded monetary values, source snippets, and `net + tax = gross` are validated before extraction can be marked verified. Provider errors, malformed JSON, uncertain evidence, and unreconciled totals fail closed to `NEEDS_REVIEW`.
+- Field types, dates, currencies, bounded monetary values, source snippets, and `net + tax = gross` are validated before extraction can be marked verified. Provider errors, malformed JSON, and uncertain evidence route to review; reliable source-supported monetary violations are blocked by policy.
 - Added portrait single-page and landscape multi-page PDF tests, invalid-output/provider-failure tests, evidence and total-reconciliation tests, and regression coverage proving all six existing samples retain their extraction paths and decisions.
-- Full backend suite: **105 passed**. Frontend TypeScript production build: **passed** with Vite 6.4.5 and 1,946 modules transformed.
+- Full backend suite: **119 passed**. Frontend TypeScript production build: **passed** with Vite 6.4.5 and 1,946 modules transformed.
 - Isolated live verification passed for all existing samples and for a genuinely unfamiliar synthetic layout processed through the configured Gemini API. The unfamiliar invoice was accepted only after ten source-linked fields and its totals validated.
 - Processing now exposes nine backend events: received, document reading, extracted, interpreted, evidence validated, vendor validated, PO matched, business rules checked, and decision saved. The UI presents these as friendly, provider-neutral progress stages.
 
-### Latest thorough live verification — 2026-10-31
+### Final interview-pack verification — 2026-11-02
+
+- `./.venv/bin/python scripts/verify_live_application.py` — **passed** against an isolated FastAPI server and temporary seeded SQLite database.
+- Five genuine interview PDFs: **2 Ready, 1 Needs Review, 2 Blocked**; all expected decisions and exact financial values matched.
+- Every run saved **9 processing events and 7 independent policy checks**; source hashes and persisted PDF bytes matched; receipts and History reopened successfully.
+- Duplicate `inv 2048` blocked under `D001`; INR 35,000 against INR 30,000 remaining blocked under `B001` with an exact INR 5,000 overage; missing PO surfaced two candidates without guessing.
+- PO ledger before and after all recommendations was identical; no test invoice was confirmed.
+
+### Historical pre-strict-policy verification — 2026-10-31
 
 - `./.venv/bin/python scripts/verify_live_application.py` — **passed** against `http://127.0.0.1:8000`.
 - Uploaded all five required genuine PDFs and verified source SHA-256 hashes against the persisted document endpoint.

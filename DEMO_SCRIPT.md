@@ -23,8 +23,8 @@ ProofLedger turns an invoice PDF into an auditable finance recommendation, then 
 1. Start the application and open `http://127.0.0.1:8000` at a desktop width of at least 1280 px.
 2. Run `./.venv/bin/python -m pytest -q`, `cd frontend && npm run typecheck`, and `npm run build`.
 3. Run `./.venv/bin/python scripts/verify_live_application.py` if the database or environment has changed.
-4. Confirm the five genuine PDFs exist in `demo_samples/`: happy path, cumulative overspend, normalized duplicate, scanned inclusive-tax, and ambiguous PO.
-5. If demonstrating the AI, set `OPENAI_API_KEY`, restart the app, and verify `/api/assistant/status` reports `configured: true`.
+4. Confirm the five interview PDFs and guide exist in `demo_samples/interview/`.
+5. If demonstrating the AI, set `GEMINI_API_KEY` or `OPENAI_API_KEY`, restart the app, and verify `/api/assistant/status` reports `configured: true`.
 6. Ask the assistant one known invoice question before recording. If it is not connected, do not simulate an answer; narrate the visible setup state instead.
 7. Do not click **Confirm as processed (demo ledger)** during the main recording because it changes later PO balances.
 8. Leave 15–20 seconds for upload or OCR variability and finish before five minutes.
@@ -79,7 +79,7 @@ Then mention the guardrail test:
 
 When the receipt appears:
 
-> “The result is Needs review under B001, the remaining-capacity control. The next action is to obtain a buyer-approved PO amendment or a corrected invoice. The AI can explain this arithmetic, but it cannot override it.”
+> “The result is Blocked under B001 because the reliable net claim exceeds the strict remaining PO budget by ₹5,000. The next action is to obtain a formally approved PO amendment or a corrected invoice. The AI can explain this arithmetic, but it cannot override it.”
 
 ### 3:35–4:05 — Step 4: normalized duplicate
 
@@ -87,11 +87,11 @@ When the receipt appears:
 
 > “The supplier writes the identifier as ‘inv 2048’, while the confirmed ledger contains ‘INV-2048’. ProofLedger normalizes the vendor and invoice identifier, finds the confirmed duplicate, and blocks the recommendation under D001. Formatting differences do not bypass the control.”
 
-### 4:05–4:32 — Step 5: OCR, review, and persistence
+### 4:05–4:32 — Step 5: ambiguous PO, review, and persistence
 
-**On screen:** Briefly show **Review queue**, **History**, and the already-tested OCR receipt.
+**On screen:** Process `05_ambiguous_po.pdf`, then briefly show **Review queue** and **History**.
 
-> “The raster-only sample contains no embedded text, so local Tesseract OCR reads the image and reconciles ₹10,000 net plus ₹1,800 included tax to ₹11,800 gross. Review Queue groups the exceptions, History retains every run, and reopening a receipt restores the source document, backend events, calculations, and reviewer notes.”
+> “Orchid Events is approved, but the invoice has no PO reference and two open candidate orders. ProofLedger does not guess: it routes the invoice to review and asks the buyer to confirm the correct PO. Review Queue groups the exceptions, and History restores the source document, backend events, calculations, and notes.”
 
 ### 4:32–4:55 — Closing judgment and limitations
 

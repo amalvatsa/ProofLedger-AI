@@ -13,7 +13,7 @@ import httpx
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SAMPLES = ROOT / "demo_samples"
+SAMPLES = ROOT / "demo_samples" / "interview"
 BASE_URL = os.getenv("PROOFLEDGER_URL", "http://127.0.0.1:8000").rstrip("/")
 EVENT_STAGES = [
     "RECEIVED",
@@ -30,14 +30,21 @@ EVENT_STAGES = [
 
 CASES: list[dict[str, Any]] = [
     {
-        "file": "happy_path.pdf",
+        "file": "01_valid_invoice.pdf",
         "decision": "READY_FOR_POSTING",
         "method": "machine_text",
         "money": {"net": "25000.00", "tax": "4500.00", "gross": "29500.00", "authorized": "120000.00", "committed": "45000.00", "remaining": "75000.00", "exceeded": "0.00"},
         "checks": {"B001_PO_REMAINING": "PASS", "D001_DUPLICATE": "PASS"},
     },
     {
-        "file": "duplicate_invoice.pdf",
+        "file": "02_valid_partial_invoice.pdf",
+        "decision": "READY_FOR_POSTING",
+        "method": "machine_text",
+        "money": {"net": "25000.00", "tax": "4500.00", "gross": "29500.00", "authorized": "100000.00", "committed": "70000.00", "remaining": "30000.00", "exceeded": "0.00"},
+        "checks": {"B001_PO_REMAINING": "PASS", "D001_DUPLICATE": "PASS"},
+    },
+    {
+        "file": "03_duplicate_invoice.pdf",
         "decision": "BLOCKED",
         "method": "machine_text",
         "money": {"net": "12000.00", "tax": "2160.00", "gross": "14160.00"},
@@ -45,23 +52,14 @@ CASES: list[dict[str, Any]] = [
         "previous_invoice": "INV-2048",
     },
     {
-        "file": "split_po_overspend.pdf",
-        "decision": "NEEDS_REVIEW",
+        "file": "04_po_budget_exceeded.pdf",
+        "decision": "BLOCKED",
         "method": "machine_text",
         "money": {"net": "35000.00", "tax": "6300.00", "gross": "41300.00", "authorized": "100000.00", "committed": "70000.00", "remaining": "30000.00", "exceeded": "5000.00"},
-        "checks": {"B001_PO_REMAINING": "REVIEW"},
+        "checks": {"B001_PO_REMAINING": "FAIL"},
     },
     {
-        "file": "scanned_inclusive_tax.pdf",
-        "decision": "READY_FOR_POSTING",
-        "method": "ocr",
-        "money": {"net": "10000.00", "tax": "1800.00", "gross": "11800.00", "authorized": "50000.00", "committed": "0.00", "remaining": "50000.00", "exceeded": "0.00"},
-        "checks": {"T001_TOTAL_RECONCILIATION": "PASS", "X001_EXTRACTION_QUALITY": "PASS"},
-        "diagnostic": "OCR_EXECUTED",
-        "tax_treatment": "INCLUSIVE",
-    },
-    {
-        "file": "ambiguous_po.pdf",
+        "file": "05_ambiguous_po.pdf",
         "decision": "NEEDS_REVIEW",
         "method": "machine_text",
         "money": {"net": "8000.00", "tax": "1440.00", "gross": "9440.00"},
@@ -98,7 +96,6 @@ def main() -> None:
         health.raise_for_status()
         health_data = health.json()
         require(health_data["status"] == "ok", "Health endpoint is not OK")
-        require(health_data["ocr_available"] is True, "Featured OCR success case requires Tesseract")
 
         summary_before = client.get("/api/summary").json()
         ledger_before = client.get("/api/ledger").json()
@@ -123,6 +120,10 @@ def main() -> None:
             require([event["stage"] for event in run["events"]] == EVENT_STAGES, f"{path.name} event sequence was incomplete")
             require(all(event["created_at"] for event in run["events"]), f"{path.name} has an event without a timestamp")
             require(len(run["checks"]) == 7, f"{path.name} did not save all seven checks")
+            require(
+                all(item.get("resolution") for item in run["checks"] if item["outcome"] != "PASS"),
+                f"{path.name} has an attention check without a suggested resolution",
+            )
             require(run["explanation"] and run["next_action"], f"{path.name} receipt lacks explanation or next action")
             require(run["document_hash"] == hashlib.sha256(payload).hexdigest(), f"{path.name} hash did not come from uploaded bytes")
 
@@ -148,7 +149,7 @@ def main() -> None:
             print(f"PASS {path.name}: {run['decision']} · {run['extraction_method']} · 9 events · 7 checks")
 
         summary_after = client.get("/api/summary").json()
-        expected_delta = {"processed": 5, "ready": 2, "needs_review": 2, "blocked": 1}
+        expected_delta = {"processed": 5, "ready": 2, "needs_review": 1, "blocked": 2}
         actual_delta = {key: summary_after[key] - summary_before[key] for key in expected_delta}
         require(actual_delta == expected_delta, f"Summary delta {actual_delta} != {expected_delta}")
 
@@ -158,17 +159,21 @@ def main() -> None:
 
         review_queue = client.get("/api/runs", params={"decision": "NEEDS_REVIEW,BLOCKED", "limit": 200}).json()
         review_ids = {item["id"] for item in review_queue}
-        expected_review_ids = {run_ids["duplicate_invoice.pdf"], run_ids["split_po_overspend.pdf"], run_ids["ambiguous_po.pdf"]}
+        expected_review_ids = {
+            run_ids["03_duplicate_invoice.pdf"],
+            run_ids["04_po_budget_exceeded.pdf"],
+            run_ids["05_ambiguous_po.pdf"],
+        }
         require(expected_review_ids.issubset(review_ids), "Featured exceptions are missing from the review queue")
 
         ledger_after = client.get("/api/ledger").json()
         require(ledger_after == ledger_before, "Recommendations changed confirmed PO commitments")
 
-        reopened = client.get(f"/api/runs/{run_ids['scanned_inclusive_tax.pdf']}").json()
-        require(reopened["decision"] == "READY_FOR_POSTING" and reopened["events"][-1]["stage"] == "DECISION_SAVED", "Saved OCR receipt did not persist")
+        reopened = client.get(f"/api/runs/{run_ids['02_valid_partial_invoice.pdf']}").json()
+        require(reopened["decision"] == "READY_FOR_POSTING" and reopened["events"][-1]["stage"] == "DECISION_SAVED", "Saved partial-invoice receipt did not persist")
 
         print(f"PASS summary delta: {actual_delta}")
-        print("PASS persistence: all run IDs in history; saved OCR receipt reopened")
+        print("PASS persistence: all run IDs in history; saved partial-invoice receipt reopened")
         print("PASS review queue: duplicate, over-budget, and ambiguous-PO runs present")
         print("PASS ledger immutability: recommendations consumed zero PO capacity")
         print(f"LIVE VERIFICATION PASSED at {BASE_URL}")

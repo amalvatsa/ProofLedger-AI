@@ -5,8 +5,8 @@
 ProofLedger AI is a working Zamp ASA PS-1 case-study prototype. It accepts genuine invoice PDF bytes, extracts supplier claims using embedded text or local OCR with an optional evidence-validated Gemini fallback for unfamiliar layouts, checks authoritative synthetic vendor/PO/confirmed-invoice records, and saves one explainable recommendation:
 
 - `READY_FOR_POSTING` — every required control passed. This is a recommendation, not an ERP post or payment.
-- `NEEDS_REVIEW` — evidence, authorization, arithmetic, extraction quality, or remaining PO capacity needs human attention.
-- `BLOCKED` — a same-supplier normalized invoice number already exists in the confirmed ledger.
+- `NEEDS_REVIEW` — missing, ambiguous, or unsupported evidence requires authorized human judgment.
+- `BLOCKED` — reliable evidence confirms a policy violation such as a duplicate, PO overrun, supplier/PO conflict, inactive supplier, or invalid monetary claim.
 
 All vendors, POs, invoices, and balances are fictional. Tax handling is an illustrative business assumption, not tax advice.
 
@@ -118,7 +118,7 @@ cd "/path/to/ProofLedger-AI"
 ./.venv/bin/python scripts/verify_live_application.py
 ```
 
-This uploads the happy path and all four featured exceptions to the real localhost API, verifies uploaded-byte hashes and persisted documents, checks every financial value and rule outcome, confirms the nine-event sequence, reopens History, checks the Review Queue, and proves that recommendations do not consume PO capacity.
+This uploads the five interview PDFs to the real localhost API, verifies uploaded-byte hashes and persisted documents, checks every financial value and rule outcome, confirms the nine-event sequence, reopens History, checks the Review Queue, and proves that recommendations do not consume PO capacity.
 
 When a real provider key is configured, verify one grounded chatbot answer and its pre-provider prompt-injection guardrail:
 
@@ -140,6 +140,8 @@ The generated files are in `demo_samples/`:
 - `ambiguous_po.pdf`
 
 The sample picker selects one of these genuine PDFs and uploads it through the same `POST /api/runs` endpoint used by independent uploads. No decision branches on filename, sample choice, fixture ID, or invoice ID.
+
+The final five-file interview pack is in `demo_samples/interview/`; see its `TEST_CASE_GUIDE.md` for exact amounts, decisions, rules, and talking points.
 
 ## Main routes
 
