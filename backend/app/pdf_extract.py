@@ -30,6 +30,9 @@ class PageText:
 StageCallback = Callable[[str], None]
 
 DEFAULT_GEMINI_EXTRACTION_MODEL = "gemini-3.6-flash"
+DEFAULT_GEMINI_THINKING_LEVEL = "minimal"
+GEMINI_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
+GEMINI_MAX_OUTPUT_TOKENS = 4096
 MONEY_TOLERANCE = Decimal("0.50")
 MAX_MONEY_VALUE = Decimal("999999999999.99")
 MAX_FALLBACK_PAGES = 10
@@ -84,13 +87,13 @@ FIELD_PATTERNS: dict[str, list[str]] = {
         r"tax\s*treatment\s*[:#-]?\s*(EXCLUSIVE|INCLUSIVE|UNKNOWN)",
     ],
     "net_amount": [
-        r"(?:subtotal\s*(?:\(\s*net\s*\))?|net\s*(?:amount|total|claim))\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
+        r"(?:subtotal[ \t]*(?:\([ \t]*net[ \t]*\))?|net[ \t]*(?:amount|total|claim))[ \t]*[:#-]?[ \t]*(?:INR|Rs\.?|₹)?[ \t]*(-?[0-9][0-9,]*\.\d{2})",
     ],
     "tax_amount": [
-        r"(?:included\s*tax|tax\s*(?:amount|total)?|gst)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
+        r"(?:included[ \t]+tax|tax[ \t]+(?:amount|total|component|collected)|gst(?:[ \t]+(?:amount|total|levy))?)[ \t]*[:#-]?[ \t]*(?:INR|Rs\.?|₹)?[ \t]*(-?[0-9][0-9,]*\.\d{2})",
     ],
     "gross_total": [
-        r"(?:total\s*(?:\(\s*gross\s*\))?|gross\s*total|amount\s*due)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
+        r"(?<![A-Za-z])(?:total[ \t]*\([ \t]*gross[ \t]*\)|gross[ \t]+total|amount[ \t]+due)[ \t]*[:#-]?[ \t]*(?:INR|Rs\.?|₹)?[ \t]*(-?[0-9][0-9,]*\.\d{2})",
     ],
 }
 
@@ -298,7 +301,7 @@ def _amount_appears_in_snippet(value: str, snippet: str) -> bool:
     expected = _normalize_amount(value)
     if expected is None:
         return False
-    for token in re.findall(r"(?<![A-Za-z0-9])(?:INR|Rs\.?|₹)?\s*-?\d[\d,]*(?:\.\d{1,2})?", snippet, re.IGNORECASE):
+    for token in re.findall(r"(?<!\d)(?:INR|Rs\.?|₹)?\s*-?\d[\d,]*(?:\.\d{1,2})?", snippet, re.IGNORECASE):
         if _normalize_amount(token) == expected:
             return True
     return False
@@ -359,6 +362,18 @@ Safety and evidence rules:
 - Use EXCLUSIVE or INCLUSIVE only when that treatment is explicitly stated. Otherwise return null.
 - Do not reconcile totals or make a posting decision. Deterministic application controls do that later.
 
+Exact field mapping:
+- invoice_number: the supplier's invoice/document identifier, never a customer, account, or order number.
+- issue_date: the printed invoice issue/raised/issued date, never a due date or service date.
+- vendor_name and vendor_id: the printed supplier identity and supplier code, not the buyer.
+- po_reference: only an explicitly printed purchase-order or authorization identifier. Never infer one from a description.
+- currency: the printed three-letter billing currency.
+- net_amount: the printed subtotal or value before tax, not a line-item amount.
+- tax_amount: the printed tax component only. Never copy the net/subtotal value.
+- gross_total: the printed payable, settlement, or invoice total. Never calculate a missing total.
+- tax_treatment: EXCLUSIVE or INCLUSIVE only when those words are printed; otherwise null.
+- line_descriptions: printed goods/service descriptions only, excluding headings and totals.
+
 LOCAL_PAGE_TEXT:
 {_local_page_text(pages)}
 """
@@ -383,6 +398,68 @@ def _gemini_response_text(payload: Any) -> str:
     return "\n".join(chunks).strip()
 
 
+def _parse_structured_candidate(response_payload: Any) -> tuple[dict[str, Any] | None, str | None]:
+    if not isinstance(response_payload, dict):
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+    candidates = response_payload.get("candidates") or []
+    if not candidates or not isinstance(candidates[0], dict):
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+    finish_reason = str(candidates[0].get("finishReason") or "").upper()
+    if finish_reason == "MAX_TOKENS":
+        return None, "STRUCTURED_FALLBACK_OUTPUT_TRUNCATED"
+
+    response_text = _gemini_response_text(response_payload).strip()
+    fenced = re.fullmatch(r"```(?:json)?\s*(\{.*\})\s*```", response_text, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        response_text = fenced.group(1)
+    try:
+        parsed = json.loads(response_text)
+    except (json.JSONDecodeError, TypeError):
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+    if not isinstance(parsed, dict) or set(parsed) - {"fields", "line_descriptions"}:
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+    raw_fields = parsed.get("fields")
+    if not isinstance(raw_fields, dict) or set(raw_fields) - set(SCALAR_FIELDS):
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+
+    normalized_fields: dict[str, Any] = {}
+    for field_name in SCALAR_FIELDS:
+        proposed = raw_fields.get(field_name, {"value": None, "page": None, "snippet": None})
+        if not isinstance(proposed, dict) or set(proposed) != {"value", "page", "snippet"}:
+            return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+        normalized_fields[field_name] = proposed
+
+    descriptions = parsed.get("line_descriptions", [])
+    if not isinstance(descriptions, list):
+        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
+    return {"fields": normalized_fields, "line_descriptions": descriptions}, None
+
+
+def _structured_fallback_http_diagnostic(error: httpx.HTTPStatusError) -> str:
+    status_code = error.response.status_code
+    try:
+        provider_error = error.response.json().get("error") or {}
+    except (AttributeError, TypeError, ValueError):
+        provider_error = {}
+    provider_code = " ".join(
+        str(provider_error.get(field) or "").casefold()
+        for field in ("code", "status", "message")
+    )
+    if status_code in {401, 403}:
+        return "STRUCTURED_FALLBACK_CREDENTIAL_REJECTED"
+    if status_code == 404:
+        return "STRUCTURED_FALLBACK_MODEL_UNAVAILABLE"
+    if status_code == 429:
+        if any(term in provider_code for term in ("quota", "billing", "resource_exhausted", "free_tier")):
+            return "STRUCTURED_FALLBACK_QUOTA_EXHAUSTED"
+        return "STRUCTURED_FALLBACK_RATE_LIMITED"
+    if status_code == 400:
+        return "STRUCTURED_FALLBACK_CONFIGURATION_REJECTED"
+    if status_code in {408, 500, 502, 503, 504}:
+        return "STRUCTURED_FALLBACK_PROVIDER_UNAVAILABLE"
+    return "STRUCTURED_FALLBACK_API_FAILED"
+
+
 def _request_structured_fallback(path: Path, pages: list[PageText]) -> tuple[dict[str, Any] | None, str | None]:
     api_key = os.getenv("GEMINI_API_KEY", "").strip()
     if not api_key:
@@ -394,6 +471,12 @@ def _request_structured_fallback(path: Path, pages: list[PageText]) -> tuple[dic
         or os.getenv("PROOFLEDGER_GEMINI_MODEL", "").strip()
         or DEFAULT_GEMINI_EXTRACTION_MODEL
     )
+    thinking_level = (
+        os.getenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", DEFAULT_GEMINI_THINKING_LEVEL).strip().casefold()
+        or DEFAULT_GEMINI_THINKING_LEVEL
+    )
+    if thinking_level not in GEMINI_THINKING_LEVELS:
+        return None, "STRUCTURED_FALLBACK_INVALID_CONFIGURATION"
     request_payload = {
         "contents": [{
             "role": "user",
@@ -405,7 +488,8 @@ def _request_structured_fallback(path: Path, pages: list[PageText]) -> tuple[dic
         "generationConfig": {
             "responseMimeType": "application/json",
             "responseJsonSchema": GEMINI_EXTRACTION_SCHEMA,
-            "maxOutputTokens": 2048,
+            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+            "thinkingConfig": {"thinkingLevel": thinking_level.upper()},
         },
     }
     try:
@@ -417,20 +501,12 @@ def _request_structured_fallback(path: Path, pages: list[PageText]) -> tuple[dic
             )
             response.raise_for_status()
             response_payload = response.json()
+    except httpx.HTTPStatusError as error:
+        return None, _structured_fallback_http_diagnostic(error)
     except (httpx.HTTPError, ValueError, OSError):
         return None, "STRUCTURED_FALLBACK_API_FAILED"
 
-    try:
-        parsed = json.loads(_gemini_response_text(response_payload))
-    except (json.JSONDecodeError, TypeError):
-        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
-    if not isinstance(parsed, dict) or set(parsed) != {"fields", "line_descriptions"}:
-        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
-    if not isinstance(parsed.get("fields"), dict) or set(parsed["fields"]) != set(SCALAR_FIELDS):
-        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
-    if not isinstance(parsed.get("line_descriptions"), list):
-        return None, "STRUCTURED_FALLBACK_INVALID_RESPONSE"
-    return parsed, None
+    return _parse_structured_candidate(response_payload)
 
 
 def _merge_structured_fallback(

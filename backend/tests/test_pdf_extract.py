@@ -189,6 +189,8 @@ def test_structured_fallback_extracts_unfamiliar_multi_format_layouts(tmp_path, 
     assert request["contents"][0]["parts"][0]["inlineData"]["mimeType"] == "application/pdf"
     assert request["generationConfig"]["responseMimeType"] == "application/json"
     assert request["generationConfig"]["responseJsonSchema"]["additionalProperties"] is False
+    assert request["generationConfig"]["maxOutputTokens"] == pdf_extract.GEMINI_MAX_OUTPUT_TOKENS
+    assert request["generationConfig"]["thinkingConfig"]["thinkingLevel"] == "MINIMAL"
 
 
 def test_fallback_rejects_invented_values_without_source_evidence(tmp_path, monkeypatch):
@@ -214,7 +216,7 @@ def test_fallback_rejects_invented_values_without_source_evidence(tmp_path, monk
 @pytest.mark.parametrize(
     ("status_code", "raw_text", "diagnostic"),
     [
-        (503, None, "STRUCTURED_FALLBACK_API_FAILED"),
+        (503, None, "STRUCTURED_FALLBACK_PROVIDER_UNAVAILABLE"),
         (200, "not valid json", "STRUCTURED_FALLBACK_INVALID_RESPONSE"),
     ],
 )
@@ -230,6 +232,24 @@ def test_fallback_provider_and_output_failures_fail_closed(tmp_path, monkeypatch
     assert result["verified"] is False
     assert diagnostic in result["diagnostics"]
     assert "EXTRACTION_UNVERIFIED" in result["diagnostics"]
+
+
+@pytest.mark.parametrize(
+    ("status_code", "provider_error", "diagnostic"),
+    [
+        (401, {"status": "UNAUTHENTICATED"}, "STRUCTURED_FALLBACK_CREDENTIAL_REJECTED"),
+        (404, {"status": "NOT_FOUND"}, "STRUCTURED_FALLBACK_MODEL_UNAVAILABLE"),
+        (429, {"status": "RESOURCE_EXHAUSTED", "message": "Free tier quota exceeded"}, "STRUCTURED_FALLBACK_QUOTA_EXHAUSTED"),
+        (429, {"status": "RATE_LIMITED", "message": "Too many requests"}, "STRUCTURED_FALLBACK_RATE_LIMITED"),
+        (400, {"status": "INVALID_ARGUMENT"}, "STRUCTURED_FALLBACK_CONFIGURATION_REJECTED"),
+    ],
+)
+def test_provider_http_failures_have_actionable_diagnostics(status_code, provider_error, diagnostic):
+    request = httpx.Request("POST", "https://example.invalid")
+    response = httpx.Response(status_code, request=request, json={"error": provider_error})
+    error = httpx.HTTPStatusError("synthetic", request=request, response=response)
+
+    assert pdf_extract._structured_fallback_http_diagnostic(error) == diagnostic
 
 
 def test_malformed_provider_envelope_is_treated_as_invalid_output(tmp_path, monkeypatch):
@@ -253,6 +273,71 @@ def test_malformed_provider_envelope_is_treated_as_invalid_output(tmp_path, monk
     assert result["verified"] is False
     assert "STRUCTURED_FALLBACK_INVALID_RESPONSE" in result["diagnostics"]
     assert "EXTRACTION_UNVERIFIED" in result["diagnostics"]
+
+
+def test_structured_response_normalizes_omitted_null_fields_and_json_fence():
+    partial = {
+        "fields": {
+            "invoice_number": evidence("INV-100", 1, "Document ref INV-100"),
+        }
+    }
+    response = {
+        "candidates": [
+            {
+                "content": {"parts": [{"text": f"```json\n{json.dumps(partial)}\n```"}]},
+                "finishReason": "STOP",
+            }
+        ]
+    }
+
+    candidate, error = pdf_extract._parse_structured_candidate(response)
+
+    assert error is None
+    assert candidate is not None
+    assert candidate["fields"]["invoice_number"]["value"] == "INV-100"
+    assert candidate["fields"]["issue_date"] == {"value": None, "page": None, "snippet": None}
+    assert candidate["line_descriptions"] == []
+
+
+def test_structured_response_reports_output_truncation():
+    candidate, error = pdf_extract._parse_structured_candidate(
+        {"candidates": [{"content": {"parts": [{"text": "{"}]}, "finishReason": "MAX_TOKENS"}]}
+    )
+
+    assert candidate is None
+    assert error == "STRUCTURED_FALLBACK_OUTPUT_TRUNCATED"
+
+
+def test_tax_pattern_does_not_cross_from_treatment_label_to_net_amount(tmp_path):
+    path = tmp_path / "tax-treatment-and-net.pdf"
+    pdf = canvas.Canvas(str(path), pagesize=A4)
+    pdf.drawString(48, 760, "Tax treatment: EXCLUSIVE")
+    pdf.drawString(48, 730, "Supply value before tax 8000.00")
+    pdf.drawString(48, 700, "Tax component 1440.00")
+    pdf.save()
+
+    result = pdf_extract.extract_invoice(path)
+
+    assert result["fields"]["tax_amount"] == "1440.00"
+    assert result["sources"]["tax_amount"]["snippet"] == "Tax component 1440.00"
+
+
+def test_gross_pattern_does_not_match_total_inside_subtotal(tmp_path):
+    path = tmp_path / "subtotal-is-not-gross.pdf"
+    pdf = canvas.Canvas(str(path), pagesize=A4)
+    pdf.drawString(48, 760, "Supplier subtotal 7000.00")
+    pdf.drawString(48, 730, "Tax on supply 1260.00")
+    pdf.drawString(48, 700, "Payable as stated 9650.00")
+    pdf.save()
+
+    result = pdf_extract.extract_invoice(path)
+
+    assert result["fields"]["net_amount"] == "7000.00"
+    assert result["fields"]["gross_total"] is None
+
+
+def test_amount_evidence_accepts_ocr_joined_label_and_number():
+    assert pdf_extract._amount_appears_in_snippet("6000.00", "Goods and services value6000.00") is True
 
 
 def test_unreconciled_model_totals_are_never_marked_verified(tmp_path, monkeypatch):
