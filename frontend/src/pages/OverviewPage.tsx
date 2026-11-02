@@ -28,7 +28,7 @@ export function OverviewPage() {
     { label: "Processed", value: summary.processed, icon: FileCheck2, tone: "navy", detail: "Completed decisions", to: "/history" },
     { label: "Ready", value: summary.ready, icon: CheckCircle2, tone: "teal", detail: "All controls passed", to: "/history?decision=READY_FOR_POSTING" },
     { label: "Needs review", value: summary.needs_review, icon: AlertTriangle, tone: "amber", detail: "Evidence needs attention", to: "/review?filter=NEEDS_REVIEW" },
-    { label: "Blocked", value: summary.blocked, icon: CircleSlash2, tone: "coral", detail: "Confirmed duplicates", to: "/review?filter=BLOCKED" },
+    { label: "Blocked", value: summary.blocked, icon: CircleSlash2, tone: "coral", detail: "Policy violations", to: "/review?filter=BLOCKED" },
   ];
 
   return (
@@ -97,17 +97,6 @@ export function OverviewPage() {
           )}
         </div>
 
-        <aside className="content-card controls-card">
-          <span className="eyebrow">How ProofLedger works</span>
-          <h2>From claim to control</h2>
-          <p>Supplier claims are compared with approved records, confirmed commitments, and explicit policy rules.</p>
-          <ol className="controls-list">
-            <li><span>1</span><div><strong>Read the document</strong><small>Embedded text or truthful OCR fallback</small></div></li>
-            <li><span>2</span><div><strong>Match authority</strong><small>Approved vendor, exact PO, currency</small></div></li>
-            <li><span>3</span><div><strong>Check the ledger</strong><small>Duplicates and cumulative PO capacity</small></div></li>
-            <li><span>4</span><div><strong>Save the evidence</strong><small>Rule codes, arithmetic, and next action</small></div></li>
-          </ol>
-        </aside>
       </section>
     </div>
   );

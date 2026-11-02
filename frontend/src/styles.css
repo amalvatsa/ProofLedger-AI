@@ -143,7 +143,7 @@ h1, h2, h3, strong { letter-spacing: -0.018em; }
 .stat-card strong { display: block; margin: 2px 0; color: var(--navy-900); font-size: 25px; line-height: 1; }
 .stat-card small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.overview-grid { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(280px, .65fr); gap: 20px; }
+.overview-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .content-card, .table-card, .toolbar-card, .timeline-card, .receipt { background: var(--card); border: 1px solid #e0e4df; border-radius: 17px; box-shadow: var(--shadow-small); }
 .content-card { padding: 25px; }
 .section-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 20px; }
@@ -645,7 +645,7 @@ button, input, select, textarea { font: inherit; }
 .stat-card strong { margin: 5px 0 3px; color: var(--navy-900); font-size: 32px; }
 .stat-card small { color: #667085; font-size: 12px; }
 .stat-card-link:hover .stat-arrow { color: #4263eb; }
-.overview-grid { grid-template-columns: minmax(0, 1.55fr) minmax(300px, .65fr); gap: 18px; }
+.overview-grid { grid-template-columns: minmax(0, 1fr); gap: 18px; }
 .run-list { margin-top: 16px; border-color: #eaecf0; }
 .run-row { grid-template-columns: 40px minmax(160px, 1fr) auto auto 16px; min-height: 68px; gap: 12px; padding: 12px 6px; border-color: #eaecf0; }
 .run-row:hover { background: #f8faff; }
