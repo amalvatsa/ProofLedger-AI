@@ -12,6 +12,41 @@ from .db import ConfirmedInvoice, PurchaseOrder, Vendor, normalize_invoice_numbe
 
 MONEY = Decimal("0.01")
 ROUNDING_TOLERANCE = Decimal("0.50")
+HARD_FAILURE_PRIORITY = (
+    "D001_DUPLICATE",
+    "B001_PO_REMAINING",
+    "T001_TOTAL_RECONCILIATION",
+    "V001_APPROVED_VENDOR",
+    "P001_PO_MATCH",
+)
+RULE_RESOLUTIONS: dict[str, dict[str, str]] = {
+    "V001_APPROVED_VENDOR": {
+        "REVIEW": "Verify or onboard the supplier through an authorized vendor-management process.",
+        "FAIL": "Resolve the supplier's inactive or prohibited status through an authorized owner before reprocessing.",
+    },
+    "I001_REQUIRED_FIELDS": {
+        "REVIEW": "Request a corrected or clearer invoice containing the missing required information.",
+    },
+    "P001_PO_MATCH": {
+        "REVIEW": "Ask the buyer to verify the correct purchase order and supplier relationship.",
+        "FAIL": "Resolve the confirmed purchase-order conflict before reprocessing the invoice.",
+    },
+    "T001_TOTAL_RECONCILIATION": {
+        "REVIEW": "Confirm the tax treatment and monetary evidence with the supplier.",
+        "FAIL": "Request a corrected invoice with policy-compliant net, tax, and gross amounts.",
+    },
+    "D001_DUPLICATE": {
+        "REVIEW": "Verify the invoice identity against the confirmed ledger.",
+        "FAIL": "Inspect the confirmed invoice and do not process a second payment.",
+    },
+    "B001_PO_REMAINING": {
+        "REVIEW": "Confirm the purchase order and invoice net amount before evaluating capacity.",
+        "FAIL": "Obtain an authorized PO amendment or request a corrected invoice before reprocessing.",
+    },
+    "X001_EXTRACTION_QUALITY": {
+        "REVIEW": "Inspect the source PDF and obtain a clearer invoice where evidence is unreadable.",
+    },
+}
 
 
 def money(value: Any) -> Decimal | None:
@@ -34,7 +69,22 @@ def check(rule_id: str, title: str, outcome: str, detail: str, evidence: dict[st
         "outcome": outcome,
         "detail": detail,
         "evidence": evidence or {},
+        "resolution": RULE_RESOLUTIONS.get(rule_id, {}).get(outcome),
     }
+
+
+def _decision_from_checks(checks: list[dict[str, Any]]) -> str:
+    outcomes = {item["outcome"] for item in checks}
+    if "FAIL" in outcomes:
+        return "BLOCKED"
+    if "REVIEW" in outcomes:
+        return "NEEDS_REVIEW"
+    return "READY_FOR_POSTING"
+
+
+def _primary_hard_failure(checks: list[dict[str, Any]]) -> dict[str, Any] | None:
+    failures = {item["rule_id"]: item for item in checks if item["outcome"] == "FAIL"}
+    return next((failures[rule_id] for rule_id in HARD_FAILURE_PRIORITY if rule_id in failures), None)
 
 
 def _find_vendor(session: Session, fields: dict[str, Any]) -> Vendor | None:
@@ -337,27 +387,25 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         )
     )
 
-    hard_failures = [item for item in checks if item["outcome"] == "FAIL"]
-    if hard_failures:
-        decision = "BLOCKED"
-        failed_ids = {item["rule_id"] for item in hard_failures}
-        if "D001_DUPLICATE" in failed_ids and duplicate:
+    decision = _decision_from_checks(checks)
+    primary_failure = _primary_hard_failure(checks)
+    if decision == "BLOCKED" and primary_failure:
+        if primary_failure["rule_id"] == "D001_DUPLICATE" and duplicate:
             explanation = "BLOCKED: This supplier and normalized invoice number already exist in the confirmed ledger. Processing again risks a duplicate payment."
             next_action = f"Inspect confirmed invoice {duplicate.invoice_number} before taking any further action."
-        elif "B001_PO_REMAINING" in failed_ids and exceeded and exceeded > 0:
+        elif primary_failure["rule_id"] == "B001_PO_REMAINING" and exceeded and exceeded > 0:
             explanation = f"BLOCKED: Invoice exceeds the remaining approved PO budget by INR {exceeded:.2f}."
             next_action = "Request a corrected invoice or verify a formally approved PO amendment before reprocessing."
-        elif "T001_TOTAL_RECONCILIATION" in failed_ids:
+        elif primary_failure["rule_id"] == "T001_TOTAL_RECONCILIATION":
             explanation = "BLOCKED: Source-supported invoice amounts violate the configured monetary reconciliation policy."
             next_action = "Request a corrected invoice with consistent net, tax, and gross amounts before reprocessing."
-        elif "V001_APPROVED_VENDOR" in failed_ids:
+        elif primary_failure["rule_id"] == "V001_APPROVED_VENDOR":
             explanation = "BLOCKED: The verified supplier is inactive or prohibited under the configured vendor policy."
             next_action = "Ask an authorized procurement or vendor-management owner to resolve the supplier status before reprocessing."
         else:
-            explanation = f"BLOCKED: {hard_failures[0]['detail']}"
-            next_action = "Resolve the confirmed policy violation before reprocessing this invoice."
-    elif any(item["outcome"] == "REVIEW" for item in checks):
-        decision = "NEEDS_REVIEW"
+            explanation = f"BLOCKED: {primary_failure['detail']}"
+            next_action = primary_failure.get("resolution") or "Resolve the confirmed policy violation before reprocessing this invoice."
+    elif decision == "NEEDS_REVIEW":
         if exceeded and exceeded > 0:
             explanation = (
                 f"The invoice claims net INR {net:.2f}. PO {matched_po.po_number} has INR {remaining:.2f} remaining, "
@@ -375,7 +423,6 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
             explanation = f"The invoice needs human review because {', '.join(failed_titles).lower()} did not clear."
             next_action = "Resolve the flagged evidence checks before confirming this invoice."
     else:
-        decision = "READY_FOR_POSTING"
         explanation = (
             f"The invoice claims net INR {net:.2f}. PO {matched_po.po_number} authorizes INR {authorized:.2f}, "
             f"of which INR {committed:.2f} is already confirmed. The remaining INR {remaining:.2f} covers this claim, "

@@ -16,6 +16,7 @@ export interface PolicyCheck {
   outcome: "PASS" | "REVIEW" | "FAIL";
   detail: string;
   evidence: Record<string, unknown>;
+  resolution: string | null;
 }
 
 export interface ExtractedFields {

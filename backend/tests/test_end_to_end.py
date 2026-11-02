@@ -81,6 +81,24 @@ def test_normalized_confirmed_duplicate_is_blocked(client):
     assert duplicate["evidence"]["previous_invoice"] == "INV-2048"
 
 
+def test_duplicate_and_budget_failure_are_both_preserved_with_deterministic_priority(client, tmp_path):
+    run = generate_and_upload(
+        client,
+        tmp_path,
+        "duplicate-and-budget.pdf",
+        invoice_number="inv 2048",
+        net="90000.00",
+        tax="16200.00",
+        gross="106200.00",
+    )
+
+    assert run["decision"] == "BLOCKED"
+    assert check_by_id(run, "D001_DUPLICATE")["outcome"] == "FAIL"
+    assert check_by_id(run, "B001_PO_REMAINING")["outcome"] == "FAIL"
+    assert "normalized invoice number already exist" in run["explanation"]
+    assert all(set(item) >= {"rule_id", "title", "outcome", "detail", "evidence", "resolution"} for item in run["checks"])
+
+
 def test_cumulative_po_balance_blocks_overspend_and_allows_smaller_split(client):
     over = upload(client, "split_po_overspend.pdf")
     assert over["decision"] == "BLOCKED"
