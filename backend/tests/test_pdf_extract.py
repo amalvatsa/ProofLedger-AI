@@ -372,7 +372,6 @@ def test_fallback_never_rewrites_complete_fields_to_fix_a_failed_financial_contr
         ("issue_date", "04/05/2026"),
         ("issue_date", "31/02/2026"),
         ("currency", "RUPEES"),
-        ("net_amount", "-100.00"),
         ("tax_amount", "18.123"),
         ("gross_total", "not-a-number"),
         ("tax_treatment", "probably exclusive"),
@@ -380,3 +379,7 @@ def test_fallback_never_rewrites_complete_fields_to_fix_a_failed_financial_contr
 )
 def test_model_field_types_are_validated_before_policy(field_name, value):
     assert pdf_extract._normalize_field_value(field_name, value) is None
+
+
+def test_negative_amount_is_preserved_for_source_supported_policy_blocking():
+    assert pdf_extract._normalize_field_value("net_amount", "-100.00") == "-100.00"

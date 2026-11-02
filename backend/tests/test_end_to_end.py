@@ -161,7 +161,7 @@ def test_missing_po_lists_candidates_without_guessing(client):
     assert check_by_id(run, "P001_PO_MATCH")["outcome"] == "REVIEW"
 
 
-def test_missing_invoice_number_and_negative_amount_need_review(client, tmp_path):
+def test_missing_invoice_number_needs_review_and_verified_negative_amount_blocks(client, tmp_path):
     missing = generate_and_upload(client, tmp_path, "missing-number.pdf", invoice_number="")
     assert missing["decision"] == "NEEDS_REVIEW"
     assert "invoice_number" in check_by_id(missing, "I001_REQUIRED_FIELDS")["evidence"]["missing"]
@@ -175,7 +175,8 @@ def test_missing_invoice_number_and_negative_amount_need_review(client, tmp_path
         tax="-18.00",
         gross="-118.00",
     )
-    assert negative["decision"] == "NEEDS_REVIEW"
+    assert negative["decision"] == "BLOCKED"
+    assert check_by_id(negative, "T001_TOTAL_RECONCILIATION")["outcome"] == "FAIL"
     assert check_by_id(negative, "X001_EXTRACTION_QUALITY")["outcome"] == "REVIEW"
 
 
@@ -273,6 +274,58 @@ def test_verified_supplier_po_ownership_mismatch_is_blocked(client, tmp_path):
     assert "authoritative owner" in check_by_id(run, "P001_PO_MATCH")["detail"]
 
 
+def test_unknown_tax_and_unsupported_po_require_review(client, tmp_path):
+    unknown_tax = generate_and_upload(
+        client,
+        tmp_path,
+        "unknown-tax.pdf",
+        invoice_number="UNKNOWN-TAX-1",
+        tax_treatment="UNKNOWN",
+    )
+    unsupported_po = generate_and_upload(
+        client,
+        tmp_path,
+        "unsupported-po.pdf",
+        invoice_number="UNSUPPORTED-PO-1",
+        po="PO-NOT-IN-SNAPSHOT",
+    )
+
+    assert unknown_tax["decision"] == "NEEDS_REVIEW"
+    assert check_by_id(unknown_tax, "T001_TOTAL_RECONCILIATION")["outcome"] == "REVIEW"
+    assert unsupported_po["decision"] == "NEEDS_REVIEW"
+    assert check_by_id(unsupported_po, "P001_PO_MATCH")["outcome"] == "REVIEW"
+    assert "does not exist in the confirmed PO ledger" in check_by_id(unsupported_po, "P001_PO_MATCH")["detail"]
+
+
+def test_confirmed_hard_failure_and_uncertain_field_are_both_disclosed(client, tmp_path):
+    run = generate_and_upload(
+        client,
+        tmp_path,
+        "duplicate-missing-po.pdf",
+        invoice_number="inv 2048",
+        po="",
+    )
+
+    assert run["decision"] == "BLOCKED"
+    assert check_by_id(run, "D001_DUPLICATE")["outcome"] == "FAIL"
+    assert check_by_id(run, "P001_PO_MATCH")["outcome"] == "REVIEW"
+
+
+def test_unknown_supplier_and_missing_invoice_identifier_remain_review(client, tmp_path):
+    run = generate_and_upload(
+        client,
+        tmp_path,
+        "unknown-and-unreadable.pdf",
+        invoice_number="",
+        vendor="Unlisted Supplier Ltd",
+        vendor_id="VEND-UNLISTED",
+    )
+
+    assert run["decision"] == "NEEDS_REVIEW"
+    assert check_by_id(run, "V001_APPROVED_VENDOR")["outcome"] == "REVIEW"
+    assert check_by_id(run, "I001_REQUIRED_FIELDS")["outcome"] == "REVIEW"
+
+
 def test_invalid_pdf_fails_with_persisted_diagnostic(client):
     response = client.post(
         "/api/runs",
@@ -284,6 +337,34 @@ def test_invalid_pdf_fails_with_persisted_diagnostic(client):
     assert run["status"] == "FAILED"
     assert "INVALID_OR_UNREADABLE_PDF" in run["diagnostics"]
     assert run["events"][-1]["outcome"] == "FAILED"
+
+
+def test_upload_type_signature_and_size_limits_fail_safely(client):
+    wrong_extension = client.post(
+        "/api/runs",
+        files={"file": ("invoice.txt", b"not a pdf", "text/plain")},
+        data={"source": "pytest"},
+    )
+    wrong_content_type = client.post(
+        "/api/runs",
+        files={"file": ("invoice.pdf", b"%PDF-placeholder", "text/plain")},
+        data={"source": "pytest"},
+    )
+    wrong_signature = client.post(
+        "/api/runs",
+        files={"file": ("invoice.pdf", b"not a pdf", "application/pdf")},
+        data={"source": "pytest"},
+    )
+    oversized = client.post(
+        "/api/runs",
+        files={"file": ("large.pdf", b"%PDF-" + b"0" * (10 * 1024 * 1024), "application/pdf")},
+        data={"source": "pytest"},
+    )
+
+    assert wrong_extension.status_code == 415
+    assert wrong_content_type.status_code == 415
+    assert wrong_signature.status_code == 400
+    assert oversized.status_code == 413
 
 
 def test_confirmation_is_idempotent_and_reduces_ledger_once(client):

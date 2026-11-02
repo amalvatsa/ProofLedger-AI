@@ -84,13 +84,13 @@ FIELD_PATTERNS: dict[str, list[str]] = {
         r"tax\s*treatment\s*[:#-]?\s*(EXCLUSIVE|INCLUSIVE|UNKNOWN)",
     ],
     "net_amount": [
-        r"(?:subtotal\s*(?:\(\s*net\s*\))?|net\s*(?:amount|total|claim))\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*([0-9][0-9,]*\.\d{2})",
+        r"(?:subtotal\s*(?:\(\s*net\s*\))?|net\s*(?:amount|total|claim))\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
     ],
     "tax_amount": [
-        r"(?:included\s*tax|tax\s*(?:amount|total)?|gst)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*([0-9][0-9,]*\.\d{2})",
+        r"(?:included\s*tax|tax\s*(?:amount|total)?|gst)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
     ],
     "gross_total": [
-        r"(?:total\s*(?:\(\s*gross\s*\))?|gross\s*total|amount\s*due)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*([0-9][0-9,]*\.\d{2})",
+        r"(?:total\s*(?:\(\s*gross\s*\))?|gross\s*total|amount\s*due)\s*[:#-]?\s*(?:INR|Rs\.?|₹)?\s*(-?[0-9][0-9,]*\.\d{2})",
     ],
 }
 
@@ -247,13 +247,13 @@ def _parse_date(value: str) -> str | None:
 def _normalize_amount(value: str) -> str | None:
     cleaned = value.strip().replace(",", "")
     cleaned = re.sub(r"^(?:INR|RS\.?|₹)\s*", "", cleaned, flags=re.IGNORECASE)
-    if not re.fullmatch(r"\d+(?:\.\d{1,2})?", cleaned):
+    if not re.fullmatch(r"-?\d+(?:\.\d{1,2})?", cleaned):
         return None
     try:
         amount = Decimal(cleaned)
     except InvalidOperation:
         return None
-    if amount < 0 or amount > MAX_MONEY_VALUE:
+    if abs(amount) > MAX_MONEY_VALUE:
         return None
     return f"{amount.quantize(Decimal('0.01')):.2f}"
 
@@ -298,7 +298,7 @@ def _amount_appears_in_snippet(value: str, snippet: str) -> bool:
     expected = _normalize_amount(value)
     if expected is None:
         return False
-    for token in re.findall(r"(?<![A-Za-z0-9])(?:INR|Rs\.?|₹)?\s*\d[\d,]*(?:\.\d{1,2})?", snippet, re.IGNORECASE):
+    for token in re.findall(r"(?<![A-Za-z0-9])(?:INR|Rs\.?|₹)?\s*-?\d[\d,]*(?:\.\d{1,2})?", snippet, re.IGNORECASE):
         if _normalize_amount(token) == expected:
             return True
     return False
@@ -355,7 +355,7 @@ Safety and evidence rules:
 - Never guess a supplier, invoice number, purchase order, currency, date, amount, or tax treatment.
 - For every non-null value, provide a one-based page number and a short verbatim snippet copied from LOCAL_PAGE_TEXT below.
 - A value without a matching LOCAL_PAGE_TEXT snippet will be rejected by the application.
-- Preserve identifiers and dates as printed. Keep monetary values as plain decimal strings without currency symbols.
+- Preserve identifiers, dates, and any printed leading minus sign. Keep monetary values as plain decimal strings without currency symbols.
 - Use EXCLUSIVE or INCLUSIVE only when that treatment is explicitly stated. Otherwise return null.
 - Do not reconcile totals or make a posting decision. Deterministic application controls do that later.
 
