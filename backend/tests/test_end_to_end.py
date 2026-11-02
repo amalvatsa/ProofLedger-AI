@@ -111,6 +111,33 @@ def test_cumulative_po_balance_blocks_overspend_and_allows_smaller_split(client)
     assert within["money"]["net"] == "25000.00"
 
 
+def test_exact_remaining_balance_passes_and_one_paisa_over_blocks(client, tmp_path):
+    exact = generate_and_upload(
+        client,
+        tmp_path,
+        "exact-remaining.pdf",
+        invoice_number="EXACT-75000",
+        net="75000.00",
+        tax="13500.00",
+        gross="88500.00",
+    )
+    over = generate_and_upload(
+        client,
+        tmp_path,
+        "one-paisa-over.pdf",
+        invoice_number="OVER-75000-01",
+        net="75000.01",
+        tax="13500.00",
+        gross="88500.01",
+    )
+
+    assert exact["decision"] == "READY_FOR_POSTING"
+    assert check_by_id(exact, "B001_PO_REMAINING")["outcome"] == "PASS"
+    assert over["decision"] == "BLOCKED"
+    assert over["money"]["exceeded"] == "0.01"
+    assert check_by_id(over, "B001_PO_REMAINING")["outcome"] == "FAIL"
+
+
 def test_image_only_invoice_executes_ocr_or_fails_safe(client):
     with pdfplumber.open(SAMPLES / "scanned_inclusive_tax.pdf") as document:
         assert (document.pages[0].extract_text() or "") == ""
@@ -205,6 +232,64 @@ def test_confirmation_is_idempotent_and_reduces_ledger_once(client):
     po = next(item for item in client.get("/api/ledger").json() if item["po_number"] == "PO-1001")
     assert po["confirmed_net"] == "70000.00"
     assert po["remaining_net"] == "50000.00"
+
+
+def test_evaluation_and_reprocessing_do_not_consume_po_capacity(client):
+    before = next(item for item in client.get("/api/ledger").json() if item["po_number"] == "PO-1001")
+    first = upload(client, "happy_path.pdf")
+    second = upload(client, "happy_path.pdf")
+    after = next(item for item in client.get("/api/ledger").json() if item["po_number"] == "PO-1001")
+
+    assert first["decision"] == second["decision"] == "READY_FOR_POSTING"
+    assert before["confirmed_net"] == after["confirmed_net"] == "45000.00"
+    assert before["remaining_net"] == after["remaining_net"] == "75000.00"
+
+
+def test_only_ready_invoices_can_be_confirmed(client, tmp_path):
+    blocked = upload(client, "split_po_overspend.pdf")
+    review = generate_and_upload(client, tmp_path, "missing-po-confirm.pdf", invoice_number="NO-PO-CONFIRM", po="")
+
+    assert client.post(f"/api/runs/{blocked['id']}/confirm").status_code == 409
+    assert client.post(f"/api/runs/{review['id']}/confirm").status_code == 409
+
+
+def test_confirmation_rechecks_latest_balance(client, tmp_path):
+    first = generate_and_upload(
+        client,
+        tmp_path,
+        "capacity-first.pdf",
+        invoice_number="CAPACITY-FIRST",
+        net="60000.00",
+        tax="10800.00",
+        gross="70800.00",
+    )
+    second = generate_and_upload(
+        client,
+        tmp_path,
+        "capacity-second.pdf",
+        invoice_number="CAPACITY-SECOND",
+        net="60000.00",
+        tax="10800.00",
+        gross="70800.00",
+    )
+    assert first["decision"] == second["decision"] == "READY_FOR_POSTING"
+
+    assert client.post(f"/api/runs/{first['id']}/confirm").status_code == 200
+    stale_confirmation = client.post(f"/api/runs/{second['id']}/confirm")
+
+    assert stale_confirmation.status_code == 409
+    assert "capacity changed" in stale_confirmation.json()["detail"]
+
+
+def test_confirmation_rechecks_duplicate_across_separate_runs(client):
+    first = upload(client, "happy_path.pdf")
+    second = upload(client, "happy_path.pdf")
+
+    assert client.post(f"/api/runs/{first['id']}/confirm").status_code == 200
+    duplicate_confirmation = client.post(f"/api/runs/{second['id']}/confirm")
+
+    assert duplicate_confirmation.status_code == 409
+    assert "confirmed invoice now exists" in duplicate_confirmation.json()["detail"]
 
 
 def test_events_history_and_notes_persist_across_client_refresh(client):
