@@ -6,6 +6,27 @@ import { Receipt } from "../components/Receipt";
 import { Timeline } from "../components/Timeline";
 import type { DemoSample, RunRecord } from "../types";
 
+const processingStages: Record<string, { title: string; progress: number }> = {
+  RECEIVED: { title: "Preparing the document", progress: 12 },
+  DOCUMENT_READING: { title: "Reading and understanding the document", progress: 30 },
+  EXTRACTED: { title: "Organizing the invoice details", progress: 44 },
+  INTERPRETED: { title: "Checking values against their source", progress: 58 },
+  EVIDENCE_VALIDATED: { title: "Checking supplier records", progress: 70 },
+  VENDOR_VALIDATED: { title: "Matching the purchase order", progress: 80 },
+  PO_MATCHED: { title: "Running financial controls", progress: 90 },
+  BUSINESS_RULES_CHECKED: { title: "Preparing the decision receipt", progress: 96 },
+};
+
+function processingPresentation(run: RunRecord) {
+  const active = [...run.events].reverse().find((event) => event.outcome === "PROCESSING");
+  const latest = active || run.events.at(-1);
+  const presentation = processingStages[latest?.stage || "RECEIVED"] || processingStages.RECEIVED;
+  return {
+    ...presentation,
+    detail: latest?.explanation || "The document has been accepted and is waiting to be read.",
+  };
+}
+
 export function ProcessInvoicePage() {
   const [samples, setSamples] = useState<DemoSample[]>([]);
   const [processingSample, setProcessingSample] = useState("");
@@ -109,6 +130,7 @@ export function ProcessInvoicePage() {
     "ambiguous_po.pdf": { title: "Ambiguous PO", lesson: "See the system surface candidates without guessing.", icon: FileSearch, tone: "warning" },
     "split_po_within_balance.pdf": { title: "Split PO within balance", lesson: "Verify a partial claim against remaining capacity.", icon: CheckCircle2, tone: "success" },
   };
+  const liveProgress = run?.status === "PROCESSING" ? processingPresentation(run) : null;
 
   return (
     <div className="page-wrap process-page">
@@ -192,7 +214,17 @@ export function ProcessInvoicePage() {
           <motion.div key="result" className="result-stack" initial={{ opacity: 0 }} animate={{ opacity: 1 }}>
             <Timeline run={run} />
             {run.status === "PROCESSING" ? (
-              <div className="processing-wait"><LoaderCircle className="spin" /><div><strong>ProofLedger is evaluating persisted evidence</strong><span>The timeline advances only when the backend saves a real event.</span></div></div>
+              <div className="processing-wait" aria-live="polite">
+                <LoaderCircle className="spin" />
+                <div className="processing-copy">
+                  <small>Current step</small>
+                  <strong>{liveProgress?.title}</strong>
+                  <span>{liveProgress?.detail}</span>
+                  <div className="processing-progress" aria-label={`${liveProgress?.progress || 0}% complete`}>
+                    <i style={{ width: `${liveProgress?.progress || 0}%` }} />
+                  </div>
+                </div>
+              </div>
             ) : (
               <Receipt run={run} onRefresh={refreshRun} />
             )}

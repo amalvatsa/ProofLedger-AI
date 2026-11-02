@@ -213,12 +213,13 @@ h1, h2, h3, strong { letter-spacing: -0.018em; }
 .result-stack { display: flex; flex-direction: column; gap: 20px; }
 .timeline-card { padding: 25px 27px; }
 .truth-label { padding: 6px 9px; color: #58736f; background: #eef3f1; border-radius: 999px; font-size: 9px; font-weight: 700; }
-.timeline-list { display: grid; grid-template-columns: repeat(7, 1fr); gap: 0; list-style: none; padding: 0; margin: 27px 0 0; }
+.timeline-list { display: grid; grid-template-columns: repeat(8, 1fr); gap: 0; list-style: none; padding: 0; margin: 27px 0 0; }
 .timeline-item { position: relative; min-width: 0; padding-right: 13px; }
 .timeline-item:not(:last-child)::before { content: ""; position: absolute; top: 13px; left: 29px; right: 0; height: 1px; background: #dce4e1; }
 .timeline-item.complete:not(:last-child)::before { background: #8dc8bf; }
 .timeline-node { position: relative; z-index: 1; width: 27px; height: 27px; display: grid; place-items: center; border-radius: 999px; color: #a1b0b1; background: #f0f3f1; border: 1px solid #dce3e1; }
 .timeline-item.complete .timeline-node { color: white; background: var(--teal); border-color: var(--teal); }
+.timeline-item.active .timeline-node { color: white; background: #4263eb; border-color: #4263eb; box-shadow: 0 0 0 5px rgba(66, 99, 235, .1); }
 .timeline-item.attention .timeline-node { color: #8d5a13; background: var(--amber-soft); border-color: #e2bf82; }
 .timeline-item.failed .timeline-node { color: white; background: var(--coral); border-color: var(--coral); }
 .timeline-copy { padding-top: 10px; }
@@ -232,6 +233,10 @@ h1, h2, h3, strong { letter-spacing: -0.018em; }
 .processing-wait strong, .processing-wait span { display: block; }
 .processing-wait strong { color: var(--ink); font-size: 12px; }
 .processing-wait span { margin-top: 3px; color: var(--muted); font-size: 10px; }
+.processing-copy { width: min(620px, 75%); }
+.processing-copy small { display: block; margin-bottom: 4px; color: #4263eb; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+.processing-progress { height: 5px; margin-top: 13px; overflow: hidden; background: #e9edf5; border-radius: 999px; }
+.processing-progress i { display: block; height: 100%; background: linear-gradient(90deg, #4263eb, #6c82ee); border-radius: inherit; transition: width .35s ease; }
 
 .receipt { padding: 29px; }
 .receipt-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding-bottom: 23px; border-bottom: 1px solid #e4e8e4; }

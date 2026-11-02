@@ -17,8 +17,10 @@ SAMPLES = ROOT / "demo_samples"
 BASE_URL = os.getenv("PROOFLEDGER_URL", "http://127.0.0.1:8000").rstrip("/")
 EVENT_STAGES = [
     "RECEIVED",
+    "DOCUMENT_READING",
     "EXTRACTED",
     "INTERPRETED",
+    "EVIDENCE_VALIDATED",
     "VENDOR_VALIDATED",
     "PO_MATCHED",
     "BUSINESS_RULES_CHECKED",
@@ -143,7 +145,7 @@ def main() -> None:
                 require(run["matched_po_number"] is None, "Ambiguous invoice incorrectly selected a PO")
                 require(run["extracted"]["candidate_pos"] == case["candidate_pos"], "Ambiguous PO candidates were incorrect")
 
-            print(f"PASS {path.name}: {run['decision']} · {run['extraction_method']} · 7 events · 7 checks")
+            print(f"PASS {path.name}: {run['decision']} · {run['extraction_method']} · 9 events · 7 checks")
 
         summary_after = client.get("/api/summary").json()
         expected_delta = {"processed": 5, "ready": 2, "needs_review": 2, "blocked": 1}

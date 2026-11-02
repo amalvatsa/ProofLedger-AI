@@ -257,7 +257,7 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
               <span>{sourcePreviewState === "checking" ? "The preview will appear when the file is ready." : "The saved receipt and extracted evidence remain available for review."}</span>
             </div>
           )}
-          <div className="extraction-chip"><ScanLine size={14} /> Extracted via {run.extraction_method === "ocr" ? "local Tesseract OCR" : "embedded PDF text"}</div>
+          <div className="extraction-chip"><ScanLine size={14} /> Extracted via {run.extraction_method === "ocr" ? "local text recognition" : run.extraction_method === "hybrid" ? "layout-aware source verification" : "embedded PDF text"}</div>
         </div>
 
         <div className="evidence-panel">

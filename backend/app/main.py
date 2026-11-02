@@ -137,6 +137,22 @@ def add_event(session: Session, run_id: str, stage: str, outcome: str, explanati
     session.commit()
 
 
+def set_event(session: Session, run_id: str, stage: str, outcome: str, explanation: str, duration_ms: int = 0) -> None:
+    event = (
+        session.query(RunEvent)
+        .filter(RunEvent.run_id == run_id, RunEvent.stage == stage)
+        .order_by(RunEvent.id.desc())
+        .first()
+    )
+    if event is None:
+        event = RunEvent(run_id=run_id, stage=stage)
+        session.add(event)
+    event.outcome = outcome
+    event.explanation = explanation
+    event.duration_ms = max(duration_ms, 0)
+    session.commit()
+
+
 def process_run(run_id: str) -> None:
     with SessionLocal() as session:
         run = session.get(Run, run_id)
@@ -144,19 +160,48 @@ def process_run(run_id: str) -> None:
             return
         try:
             started = time.perf_counter()
-            extraction = extract_invoice(Path(run.stored_path))
+            set_event(
+                session,
+                run_id,
+                "DOCUMENT_READING",
+                "PROCESSING",
+                "Opening the PDF and reading its page structure.",
+            )
+            extraction = extract_invoice(
+                Path(run.stored_path),
+                stage_callback=lambda message: set_event(
+                    session,
+                    run_id,
+                    "DOCUMENT_READING",
+                    "PROCESSING",
+                    message,
+                    int((time.perf_counter() - started) * 1000),
+                ),
+            )
             run.extraction_method = extraction["method"]
             run.extracted_json = json_dump(
                 {
                     "fields": extraction["fields"],
                     "sources": extraction["sources"],
                     "page_count": extraction["page_count"],
+                    "validation": extraction["validation"],
                 }
             )
             run.diagnostics_json = json_dump(extraction["diagnostics"])
             run.updated_at = utcnow()
             session.commit()
-            method_label = "local OCR" if extraction["method"] == "ocr" else "embedded PDF text"
+            method_label = {
+                "ocr": "local page-image text recognition",
+                "hybrid": "layout-aware extraction with source-linked verification",
+            }.get(extraction["method"], "embedded PDF text")
+            set_event(
+                session,
+                run_id,
+                "DOCUMENT_READING",
+                "COMPLETED" if extraction["verified"] else "ATTENTION",
+                f"Finished reading {extraction['page_count']} page(s) using {method_label}.",
+                int((time.perf_counter() - started) * 1000),
+            )
             add_event(
                 session,
                 run_id,
@@ -175,6 +220,21 @@ def process_run(run_id: str) -> None:
                 "COMPLETED" if extraction["verified"] else "ATTENTION",
                 f"Mapped {fields_present} claimed fields into the constrained invoice schema.",
                 int((time.perf_counter() - interpreted_at) * 1000),
+            )
+
+            validation_passed = bool(extraction["verified"])
+            validation_detail = (
+                "Field types, page-linked source evidence, and invoice totals passed validation."
+                if validation_passed
+                else "Some fields, source evidence, or invoice totals could not be verified; the policy engine will require review."
+            )
+            add_event(
+                session,
+                run_id,
+                "EVIDENCE_VALIDATED",
+                "COMPLETED" if validation_passed else "ATTENTION",
+                validation_detail,
+                0,
             )
 
             policy_at = time.perf_counter()
@@ -216,6 +276,7 @@ def process_run(run_id: str) -> None:
                 0,
             )
         except ExtractionError as error:
+            set_event(session, run_id, "DOCUMENT_READING", "FAILED", str(error), 0)
             run = session.get(Run, run_id)
             run.status = "FAILED"
             run.decision = None
@@ -226,6 +287,7 @@ def process_run(run_id: str) -> None:
             session.commit()
             add_event(session, run_id, "EXTRACTION_FAILED", "FAILED", str(error), 0)
         except Exception as error:
+            set_event(session, run_id, "DOCUMENT_READING", "FAILED", "Document processing stopped safely.", 0)
             run = session.get(Run, run_id)
             run.status = "FAILED"
             run.diagnostics_json = json_dump(["PROCESSING_ERROR", str(error)[:300]])

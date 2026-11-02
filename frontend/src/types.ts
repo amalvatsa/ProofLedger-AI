@@ -28,7 +28,7 @@ export interface ExtractedFields {
   net_amount: string | null;
   tax_amount: string | null;
   gross_total: string | null;
-  tax_treatment: string;
+  tax_treatment: string | null;
   line_descriptions: string[];
 }
 
@@ -42,8 +42,16 @@ export interface RunRecord {
   extraction_method: string | null;
   extracted: {
     fields?: ExtractedFields;
-    sources?: Record<string, { page: number; snippet: string }>;
+    sources?: Record<string, { page: number; snippet: string; method?: string } | Array<{ page: number; snippet: string; method?: string }>>;
     page_count?: number;
+    validation?: {
+      required_fields_present: boolean;
+      source_evidence_complete: boolean;
+      totals_reconciled: boolean;
+      sourced_field_count: number;
+      fallback_attempted: boolean;
+      fallback_accepted_fields: number;
+    };
     vendor_id?: string;
     candidate_pos?: string[];
   };

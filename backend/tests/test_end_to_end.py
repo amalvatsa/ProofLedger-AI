@@ -194,8 +194,10 @@ def test_events_history_and_notes_persist_across_client_refresh(client):
     stages = [event["stage"] for event in run["events"]]
     assert stages == [
         "RECEIVED",
+        "DOCUMENT_READING",
         "EXTRACTED",
         "INTERPRETED",
+        "EVIDENCE_VALIDATED",
         "VENDOR_VALIDATED",
         "PO_MATCHED",
         "BUSINESS_RULES_CHECKED",

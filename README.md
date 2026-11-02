@@ -2,7 +2,7 @@
 
 **Every invoice gets a decision. Every decision has proof.**
 
-ProofLedger AI is a working Zamp ASA PS-1 case-study prototype. It accepts genuine invoice PDF bytes, extracts supplier claims using embedded text or local OCR, checks authoritative synthetic vendor/PO/confirmed-invoice records, and saves one explainable recommendation:
+ProofLedger AI is a working Zamp ASA PS-1 case-study prototype. It accepts genuine invoice PDF bytes, extracts supplier claims using embedded text or local OCR with an optional evidence-validated Gemini fallback for unfamiliar layouts, checks authoritative synthetic vendor/PO/confirmed-invoice records, and saves one explainable recommendation:
 
 - `READY_FOR_POSTING` — every required control passed. This is a recommendation, not an ERP post or payment.
 - `NEEDS_REVIEW` — evidence, authorization, arithmetic, extraction quality, or remaining PO capacity needs human attention.
@@ -11,6 +11,20 @@ ProofLedger AI is a working Zamp ASA PS-1 case-study prototype. It accepts genui
 All vendors, POs, invoices, and balances are fictional. Tax handling is an illustrative business assumption, not tax advice.
 
 The interface is intentionally desktop-web only with a fixed sidebar and a 1280px minimum canvas; mobile navigation and mobile layout variants are not included.
+
+### Optional unfamiliar-layout extraction
+
+Deterministic extraction always runs first. To allow a Gemini structured-output attempt only when core fields are missing or ambiguous, explicitly opt in:
+
+```bash
+PROOFLEDGER_GEMINI_EXTRACTION_ENABLED=true
+PROOFLEDGER_GEMINI_EXTRACTION_MODEL=gemini-3.6-flash
+GEMINI_API_KEY=your-key
+```
+
+The fallback sends the PDF and locally extracted page text to Gemini. It cannot approve an invoice or change a policy result. Every proposed non-null value must include a page number and verbatim source snippet that matches local page text. The application then validates the field type, date, currency, non-negative monetary values, source evidence, and `net + tax = gross` tolerance before setting extraction quality to verified. Invalid JSON, API failures, unsupported values, missing evidence, or unreconciled totals remain unverified and reach the unchanged policy engine as `NEEDS_REVIEW` unless a stronger deterministic duplicate control blocks the invoice.
+
+Actual limitations: this path is opt-in because PDFs leave the local machine; it is capped at 10 pages; values without locally corroborated text are rejected; an image-only PDF still needs local OCR text for field evidence; ambiguous numeric dates become null; line items are descriptions rather than a full quantity/rate table; a missing PO by itself does not trigger an external call; and no production accuracy benchmark has been established.
 
 ## One-time setup
 
@@ -98,7 +112,7 @@ cd "/path/to/ProofLedger-AI"
 ./.venv/bin/python scripts/verify_live_application.py
 ```
 
-This uploads the happy path and all four featured exceptions to the real localhost API, verifies uploaded-byte hashes and persisted documents, checks every financial value and rule outcome, confirms the seven-event sequence, reopens History, checks the Review Queue, and proves that recommendations do not consume PO capacity.
+This uploads the happy path and all four featured exceptions to the real localhost API, verifies uploaded-byte hashes and persisted documents, checks every financial value and rule outcome, confirms the nine-event sequence, reopens History, checks the Review Queue, and proves that recommendations do not consume PO capacity.
 
 When a real provider key is configured, verify one grounded chatbot answer and its pre-provider prompt-injection guardrail:
 
@@ -106,7 +120,7 @@ When a real provider key is configured, verify one grounded chatbot answer and i
 PROOFLEDGER_EXPECTED_PROVIDER=gemini ./.venv/bin/python scripts/verify_live_assistant.py
 ```
 
-The backend suite uses an isolated temporary SQLite database. It covers real machine-readable PDFs, normalized duplicates, cumulative PO capacity, inclusive tax, actual OCR or truthful unavailability, ambiguous/missing fields, embedded prompt injection, invalid PDFs, idempotent demo confirmation, events, notes, and persistent history.
+The backend suite uses an isolated temporary SQLite database. It covers real machine-readable PDFs, normalized duplicates, cumulative PO capacity, inclusive tax, actual OCR or truthful unavailability, two unfamiliar-layout PDF formats, structured-output validation, invented or unsourced values, provider and JSON failures, unreconciled totals, ambiguous/missing fields, embedded prompt injection, invalid PDFs, idempotent demo confirmation, events, notes, and persistent history.
 
 ## Demo PDFs
 
