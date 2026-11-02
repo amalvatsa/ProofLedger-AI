@@ -17,17 +17,16 @@ Phases 1–5 complete for the local/Docker case-study prototype. The verified pr
 - Built the responsive React + TypeScript interface with Overview, Process Invoice, Review Queue, History, saved receipt routes, and read-only PO ledger.
 - Connected every visible control to real behavior: independent upload, genuine sample upload, filters, search, receipt inspection, evidence expansion, reviewer notes, and explicit idempotent demo-ledger confirmation.
 - Added a backend-derived animated timeline, actual PDF preview, exact PO-capacity visualization, extraction method disclosure, responsive navigation, focus states, and reduced-motion support.
-- Added combined local production serving, Docker packaging, startup instructions, tradeoffs, and a five-minute demo guide.
+- Added combined local production serving, Docker packaging, startup instructions, and documented tradeoffs.
 - Final desktop-web UI pass: removed all mobile navigation and responsive layout branches, fixed the sidebar in place, and enforced a 1280px desktop canvas.
 - Made all four Overview summary cards keyboard-accessible links: Processed → History, Ready → filtered History, and Needs Review / Blocked → filtered Review Queue views.
 - Added a branded pre-React loading screen with the ProofLedger document-check icon, accessible status text, reduced-motion support, and a real bundle-initialization progress treatment with no artificial delay.
 - Changed stored invoice delivery to an inline PDF response so opening the evidence preview no longer triggers an automatic file download.
-- Reworked `DEMO_SCRIPT.md` into a verified sub-five-minute recording walkthrough plus interview Q&A, using the application’s exact sample names, decisions, amounts, extraction modes, and honest limitations.
 - Added a real receipt-grounded AI assistant backed by Google Gemini, with `gemini-3.6-flash` as the default model, selected-receipt-only context, deterministic evidence references, and no state-changing tools.
 - Added server-side scope, cross-invoice, prompt-injection, payment, approval, and posting guardrails; unrelated questions are rejected before a provider call and the deterministic policy decision remains authoritative.
 - Added a polished desktop assistant experience with visible boundaries, suggested questions, grounded evidence chips, honest configuration status, and no simulated model fallback.
 - Promoted Invoice AI into the fixed left navigation so it is available on every page. The global drawer requires manual receipt selection, groups saved invoices by attention level, supports invoice/supplier search, hides the chat composer until selection, and resets scope when changing or closing the assistant.
-- Added `.env.example`, startup configuration loading, AI health/status reporting, API documentation, and an updated recording/interview script that begins with the product, problem, differentiation, and step-by-step workflow.
+- Added `.env.example`, startup configuration loading, AI health/status reporting, and API documentation.
 
 ## Verification results
 
@@ -91,4 +90,3 @@ Phases 1–5 complete for the local/Docker case-study prototype. The verified pr
 
 - No public deployment was attempted because no production hosting target or credentials were supplied. A static-only deployment would be misleading because the working FastAPI/SQLite/OCR backend is required.
 - A successful live Gemini answer still requires a valid `GEMINI_API_KEY` with available project quota. The deterministic invoice workflow remains available without it.
-- The five-minute video must still be recorded and uploaded by the candidate; `DEMO_SCRIPT.md` provides the verified run order and talking points.
