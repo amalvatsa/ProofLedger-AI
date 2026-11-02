@@ -58,17 +58,17 @@ Open [http://127.0.0.1:8000](http://127.0.0.1:8000). Runtime uploads and SQLite 
 
 ### Enable the invoice AI assistant
 
-The application works without an LLM. The receipt-grounded assistant supports the Google Gemini API and the OpenAI Responses API. Copy the example configuration, add one provider key, and restart the application:
+The application works without an LLM. The receipt-grounded assistant uses the Google Gemini API. Copy the example configuration, add your Gemini key, and restart the application:
 
 ```bash
 cp .env.example .env
-# Edit .env and set GEMINI_API_KEY or OPENAI_API_KEY, then:
+# Edit .env and set GEMINI_API_KEY, then:
 ./start.sh
 ```
 
-With `PROOFLEDGER_LLM_PROVIDER=auto`, Gemini is selected when `GEMINI_API_KEY` is present; otherwise OpenAI is used. The default Gemini model is `gemini-3.6-flash` with minimal thinking, and the default OpenAI model is `gpt-6-luna`. Set `PROOFLEDGER_LLM_PROVIDER=gemini` to require Google explicitly. Gemini thinking levels are `minimal`, `low`, `medium`, or `high`.
+The default model is `gemini-3.6-flash` with minimal thinking. Gemini thinking levels are `minimal`, `low`, `medium`, or `high`.
 
-Both provider paths receive only a constrained snapshot of the manually selected Decision Receipt. Unrelated and prompt-injection requests are rejected before the model call, and the model cannot change policy results or perform payment/posting actions. OpenAI requests disable API storage. The UI distinguishes a key that is merely **configured** from a provider that has returned a **verified** live answer, shows the provider/model used for each answer, and visibly reports configuration, quota, rate-limit, safety-block, and provider failures.
+Gemini receives only a constrained snapshot of the manually selected Decision Receipt. Unrelated and prompt-injection requests are rejected before the model call, and the model cannot change policy results or perform payment/posting actions. The UI distinguishes a key that is merely **configured** from a provider that has returned a **verified** live answer, shows the model used for each answer, and visibly reports configuration, quota, rate-limit, safety-block, and provider failures.
 
 ### Windows PowerShell
 

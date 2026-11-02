@@ -98,7 +98,7 @@ export interface DemoSample {
 
 export interface AssistantStatus {
   configured: boolean;
-  provider_id: "openai" | "gemini" | null;
+  provider_id: "gemini";
   provider: string | null;
   model: string;
   thinking_level: "minimal" | "low" | "medium" | "high" | null;
@@ -115,7 +115,7 @@ export interface AssistantEvidence {
 export interface AssistantReply {
   answer: string;
   evidence: AssistantEvidence[];
-  provider_id: "openai" | "gemini";
+  provider_id: "gemini";
   provider: string;
   model: string;
   latency_ms: number;

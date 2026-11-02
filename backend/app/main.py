@@ -470,12 +470,11 @@ def ask_invoice_assistant(
     status = get_assistant_status()
     if not status["configured"]:
         configuration_error = status.get("configuration_error")
-        provider_key = "GEMINI_API_KEY" if status.get("provider_id") == "gemini" else "OPENAI_API_KEY"
         raise HTTPException(
             status_code=503,
             detail=(
                 configuration_error
-                or f"Invoice AI is not configured. Set {provider_key} and restart the application."
+                or "Invoice AI is not configured. Set GEMINI_API_KEY and restart the application."
             ),
         )
 

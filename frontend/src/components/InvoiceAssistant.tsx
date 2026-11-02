@@ -251,12 +251,12 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
     : !status.configured
       ? "Model setup needed"
       : providerState === "verified"
-        ? `${status.provider_id === "gemini" ? "Gemini" : "OpenAI"} · ${status.model} · verified`
+        ? `Gemini · ${status.model} · verified`
         : providerState === "limited"
           ? "Provider rate-limited"
           : providerState === "unavailable"
             ? "Provider unavailable"
-            : `${status.provider_id === "gemini" ? "Gemini" : "OpenAI"} · ${status.model} · configured`;
+            : `Gemini · ${status.model} · configured`;
 
   return (
     <AnimatePresence>
@@ -374,7 +374,7 @@ export function InvoiceAssistant({ open, onClose }: InvoiceAssistantProps) {
                     <div>
                       <span className="eyebrow">Real model required</span>
                       <h4>Connect the invoice AI</h4>
-                      <p>{status.configuration_error || <>Set <code>GEMINI_API_KEY</code> for Google Gemini or <code>OPENAI_API_KEY</code> for OpenAI, choose the provider if needed, and restart ProofLedger. No simulated answer is shown while the model is unavailable.</>}</p>
+                      <p>{status.configuration_error || <>Set <code>GEMINI_API_KEY</code> and restart ProofLedger. No simulated answer is shown while Gemini is unavailable.</>}</p>
                     </div>
                   </div>
                 ) : (

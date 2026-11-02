@@ -8,9 +8,7 @@ from typing import Any
 import httpx
 
 
-DEFAULT_OPENAI_MODEL = "gpt-6-luna"
 DEFAULT_GEMINI_MODEL = "gemini-3.6-flash"
-DEFAULT_MODEL = DEFAULT_OPENAI_MODEL
 DEFAULT_GEMINI_THINKING_LEVEL = "minimal"
 GEMINI_THINKING_LEVELS = {"minimal", "low", "medium", "high"}
 GEMINI_MAX_OUTPUT_TOKENS = 1024
@@ -151,54 +149,24 @@ class AssistantProviderError(RuntimeError):
 
 
 def _provider_configuration() -> dict[str, Any]:
-    requested = os.getenv("PROOFLEDGER_LLM_PROVIDER", "auto").strip().casefold() or "auto"
-    openai_key = os.getenv("OPENAI_API_KEY", "").strip()
-    gemini_key = os.getenv("GEMINI_API_KEY", "").strip()
-
-    if requested == "auto":
-        provider = "gemini" if gemini_key else "openai"
-    elif requested in {"openai", "gemini"}:
-        provider = requested
-    else:
-        provider = "unsupported"
-
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    model = os.getenv("PROOFLEDGER_GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
     configuration_error: str | None = None
-    thinking_level: str | None = None
-
-    if provider == "gemini":
-        api_key = gemini_key
-        model = os.getenv("PROOFLEDGER_GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
-        display_name = "Google Gemini API"
-        thinking_level = (
-            os.getenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", DEFAULT_GEMINI_THINKING_LEVEL).strip().casefold()
-            or DEFAULT_GEMINI_THINKING_LEVEL
-        )
-        if thinking_level not in GEMINI_THINKING_LEVELS:
-            configuration_error = (
-                "PROOFLEDGER_GEMINI_THINKING_LEVEL must be minimal, low, medium, or high."
-            )
-    elif provider == "openai":
-        api_key = openai_key
-        model = (
-            os.getenv("PROOFLEDGER_OPENAI_MODEL", "").strip()
-            or os.getenv("PROOFLEDGER_LLM_MODEL", DEFAULT_OPENAI_MODEL).strip()
-            or DEFAULT_OPENAI_MODEL
-        )
-        display_name = "OpenAI Responses API"
-    else:
-        api_key = ""
-        model = "unavailable"
-        display_name = None
-        configuration_error = "PROOFLEDGER_LLM_PROVIDER must be openai, gemini, or auto."
+    thinking_level = (
+        os.getenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", DEFAULT_GEMINI_THINKING_LEVEL).strip().casefold()
+        or DEFAULT_GEMINI_THINKING_LEVEL
+    )
+    if thinking_level not in GEMINI_THINKING_LEVELS:
+        configuration_error = "PROOFLEDGER_GEMINI_THINKING_LEVEL must be minimal, low, medium, or high."
 
     return {
-        "provider_id": provider,
-        "provider": display_name,
+        "provider_id": "gemini",
+        "provider": "Google Gemini API",
         "api_key": api_key,
         "model": model,
         "thinking_level": thinking_level,
         "configuration_error": configuration_error,
-        "configured": bool(api_key) and provider in {"openai", "gemini"} and not configuration_error,
+        "configured": bool(api_key) and not configuration_error,
     }
 
 
@@ -206,7 +174,7 @@ def assistant_status() -> dict[str, Any]:
     configuration = _provider_configuration()
     return {
         "configured": configuration["configured"],
-        "provider_id": configuration["provider_id"] if configuration["provider_id"] in {"openai", "gemini"} else None,
+        "provider_id": "gemini",
         "provider": configuration["provider"] if configuration["api_key"] else None,
         "model": configuration["model"],
         "thinking_level": configuration["thinking_level"],
@@ -349,17 +317,6 @@ def evidence_references(question: str, context: dict[str, Any]) -> list[dict[str
     return references[:4]
 
 
-def _extract_output_text(payload: dict[str, Any]) -> str:
-    chunks: list[str] = []
-    for item in payload.get("output") or []:
-        if item.get("type") != "message":
-            continue
-        for content in item.get("content") or []:
-            if content.get("type") == "output_text" and content.get("text"):
-                chunks.append(str(content["text"]))
-    return "\n".join(chunks).strip()
-
-
 def _extract_gemini_output_text(payload: dict[str, Any]) -> str:
     chunks: list[str] = []
     for candidate in payload.get("candidates") or []:
@@ -409,7 +366,7 @@ def _provider_error_code(response: httpx.Response) -> str:
     )
 
 
-def _raise_provider_http_error(error: httpx.HTTPStatusError, provider_id: str) -> None:
+def _raise_provider_http_error(error: httpx.HTTPStatusError) -> None:
     status_code = error.response.status_code
     provider_code = _provider_error_code(error.response)
     if status_code in {401, 403} or (
@@ -420,9 +377,8 @@ def _raise_provider_http_error(error: httpx.HTTPStatusError, provider_id: str) -
     if status_code == 404:
         raise AssistantUnavailable("The configured AI model is unavailable. Check the provider model name.") from error
     if status_code == 400:
-        provider_name = "Google Gemini" if provider_id == "gemini" else "OpenAI"
         raise AssistantUnavailable(
-            f"{provider_name} rejected the model configuration. Check the configured model and reasoning settings."
+            "Google Gemini rejected the model configuration. Check the configured model and reasoning settings."
         ) from error
     if status_code == 429:
         if any(term in provider_code for term in ("quota", "billing", "resource_exhausted", "insufficient")):
@@ -485,14 +441,12 @@ def generate_invoice_answer(
     context: dict[str, Any],
 ) -> str:
     configuration = _provider_configuration()
-    provider_id = str(configuration["provider_id"])
     api_key = str(configuration["api_key"] or "")
     model = str(configuration["model"])
     if configuration["configuration_error"]:
         raise AssistantUnavailable(str(configuration["configuration_error"]))
     if not api_key:
-        key_name = "GEMINI_API_KEY" if provider_id == "gemini" else "OPENAI_API_KEY"
-        raise AssistantUnavailable(f"The invoice AI assistant needs {key_name}.")
+        raise AssistantUnavailable("The invoice AI assistant needs GEMINI_API_KEY.")
 
     conversation = sanitize_history(history)
     gemini_thinking_level = str(configuration["thinking_level"] or DEFAULT_GEMINI_THINKING_LEVEL).upper()
@@ -506,47 +460,30 @@ def generate_invoice_answer(
     }
     try:
         with httpx.Client(timeout=httpx.Timeout(25.0, connect=8.0)) as client:
-            if provider_id == "gemini":
-                response = client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
-                    headers={
-                        "x-goog-api-key": api_key,
-                        "Content-Type": "application/json",
+            response = client.post(
+                f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+                headers={
+                    "x-goog-api-key": api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "systemInstruction": {"parts": [{"text": ASSISTANT_INSTRUCTIONS}]},
+                    "contents": [
+                        {
+                            "role": "user",
+                            "parts": [{"text": json.dumps(input_payload, ensure_ascii=False)}],
+                        }
+                    ],
+                    "generationConfig": {
+                        "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
+                        "responseMimeType": "text/plain",
+                        "thinkingConfig": {"thinkingLevel": gemini_thinking_level},
                     },
-                    json={
-                        "systemInstruction": {"parts": [{"text": ASSISTANT_INSTRUCTIONS}]},
-                        "contents": [
-                            {
-                                "role": "user",
-                                "parts": [{"text": json.dumps(input_payload, ensure_ascii=False)}],
-                            }
-                        ],
-                        "generationConfig": {
-                            "maxOutputTokens": GEMINI_MAX_OUTPUT_TOKENS,
-                            "responseMimeType": "text/plain",
-                            "thinkingConfig": {"thinkingLevel": gemini_thinking_level},
-                        },
-                    },
-                )
-            else:
-                response = client.post(
-                    "https://api.openai.com/v1/responses",
-                    headers={
-                        "Authorization": f"Bearer {api_key}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "model": model,
-                        "instructions": ASSISTANT_INSTRUCTIONS,
-                        "input": json.dumps(input_payload, ensure_ascii=False),
-                        "reasoning": {"effort": "none"},
-                        "max_output_tokens": 500,
-                        "store": False,
-                    },
-                )
+                },
+            )
             response.raise_for_status()
     except httpx.HTTPStatusError as error:
-        _raise_provider_http_error(error, provider_id)
+        _raise_provider_http_error(error)
     except httpx.HTTPError as error:
         raise AssistantProviderError("The AI provider is temporarily unavailable.") from error
 
@@ -555,9 +492,5 @@ def generate_invoice_answer(
     except ValueError as error:
         raise AssistantProviderError("The AI provider returned an invalid response.") from error
 
-    answer = (
-        _gemini_answer_text(response_payload)
-        if provider_id == "gemini"
-        else _extract_output_text(response_payload)
-    )
+    answer = _gemini_answer_text(response_payload)
     return _safe_answer(answer, context.get("decision"), context)

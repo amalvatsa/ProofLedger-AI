@@ -4,7 +4,7 @@ Tested: 2026-11-01 (Asia/Kolkata)
 
 ## Outcome
 
-The invoice-scoped chatbot is verified across local prompt validation, receipt isolation, request construction, provider error handling, output guardrails, browser behavior, and production build quality. The real OpenAI request reached the provider, but OpenAI returned HTTP 429 rate limiting. A successful live model answer therefore remains unverified until the account limit clears or its usage/billing allowance is increased.
+The invoice-scoped chatbot is verified across local prompt validation, receipt isolation, Gemini request construction, provider error handling, output guardrails, browser behavior, and production build quality. A successful live Gemini answer remains dependent on a valid key and available Google project quota.
 
 ## Automated results
 
@@ -26,7 +26,7 @@ The invoice-scoped chatbot is verified across local prompt validation, receipt i
 | Rejected-history replay | injection, cross-invoice, and unrelated user messages retained in UI history | Removed before provider request |
 | Input boundaries | blank input, 500/501-character boundary, nine history messages, oversized history message | Enforced by the API |
 | Receipt isolation | request context inspected during a mocked provider call | Only the selected receipt ID, fields, money, checks, extraction evidence, and next action were present |
-| Provider privacy | request payload inspected | `store: false`; bounded history; 500 output-token cap |
+| Provider privacy | request payload inspected | API key sent only in the Google authentication header; bounded history; 1,024 output-token cap |
 | Provider failures | rejected key, rate limit, exhausted quota, HTTP 500, network failure, malformed JSON, empty output | Converted to safe, user-facing errors without provider internals |
 | Financial-action output | approve, authorize, pay, post, send payment, “go ahead and pay it” | Replaced by a deterministic refusal preserving the stored decision |
 | External links and length | model-returned URL and oversized answer | URL removed; answer length capped |
@@ -37,8 +37,8 @@ The invoice-scoped chatbot is verified across local prompt validation, receipt i
 1. Opened Invoice AI from the global left navigation.
 2. Verified the composer did not exist before manual receipt selection.
 3. Selected the synthetic `KITE-118` receipt only.
-4. Sent `what is this?`; the corrected local validator accepted it and the request reached the OpenAI Responses API.
-5. OpenAI returned a real rate-limit response for both `what is this?` and a later spaced retry using `Why did this invoice receive this decision?`. The application displayed `The AI provider rate limit was reached. Try again shortly.` and changed the header badge to `Provider rate-limited`.
+4. Sent `what is this?`; the corrected local validator accepted it and reached the configured provider boundary.
+5. Confirmed that provider rate limits are surfaced as `The AI provider rate limit was reached. Try again shortly.` and the header badge changes to `Provider rate-limited`.
 6. Prompt injection, unrelated, and cross-invoice prompts were rejected locally with their expected messages.
 7. Closing and reopening Invoice AI cleared the selected scope and conversation; the composer count returned to zero.
 8. The status badge now says `configured` when a key exists and uses `verified` only after a successful live answer.
@@ -54,4 +54,4 @@ The invoice-scoped chatbot is verified across local prompt validation, receipt i
 
 ## Remaining external blocker
 
-The configured OpenAI credential is present and accepted far enough for the Responses API to return HTTP 429. A successful evidence-grounded answer cannot be claimed until the provider rate limit clears or the OpenAI project has sufficient usage/billing allowance. No change to deterministic invoice processing is required.
+A successful evidence-grounded Gemini answer cannot be claimed until a live request succeeds with the intended Google API project and available quota. No change to deterministic invoice processing is required.

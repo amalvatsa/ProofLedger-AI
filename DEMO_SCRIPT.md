@@ -11,7 +11,7 @@ ProofLedger turns an invoice PDF into an auditable finance recommendation, then 
 - Working local URL: `http://127.0.0.1:8000`
 - Invoice extraction uses embedded PDF text with a genuine local Tesseract OCR fallback.
 - Financial controls are deterministic: approved vendor, required fields, exact PO match, total reconciliation, duplicate history, remaining PO capacity, and extraction quality.
-- The receipt assistant uses the OpenAI Responses API with `gpt-6-luna` only when `OPENAI_API_KEY` is configured.
+- The receipt assistant uses the Google Gemini API with `gemini-3.6-flash` only when `GEMINI_API_KEY` is configured.
 - The model receives a constrained snapshot of the selected Decision Receipt—not the whole database or another invoice.
 - A `READY_FOR_POSTING` result is a recommendation only. Neither the policy engine nor the AI executes payment or ERP posting.
 - Recommendations do not consume PO capacity. Only the explicit synthetic demo-ledger confirmation changes confirmed commitments.
@@ -24,7 +24,7 @@ ProofLedger turns an invoice PDF into an auditable finance recommendation, then 
 2. Run `./.venv/bin/python -m pytest -q`, `cd frontend && npm run typecheck`, and `npm run build`.
 3. Run `./.venv/bin/python scripts/verify_live_application.py` if the database or environment has changed.
 4. Confirm the five interview PDFs and guide exist in `demo_samples/interview/`.
-5. If demonstrating the AI, set `GEMINI_API_KEY` or `OPENAI_API_KEY`, restart the app, and verify `/api/assistant/status` reports `configured: true`.
+5. If demonstrating the AI, set `GEMINI_API_KEY`, restart the app, and verify `/api/assistant/status` reports `configured: true`.
 6. Ask the assistant one known invoice question before recording. If it is not connected, do not simulate an answer; narrate the visible setup state instead.
 7. Do not click **Confirm as processed (demo ledger)** during the main recording because it changes later PO balances.
 8. Leave 15–20 seconds for upload or OCR variability and finish before five minutes.
@@ -113,7 +113,7 @@ Stop recording before 5:00.
 8. **Save the Decision Receipt.** The recommendation, explanation, money breakdown, rule evidence, next action, source document, diagnostics, and events remain available in History.
 9. **Render the analyst workspace.** React shows Overview, Process Invoice, Review Queue, History, source preview, backend timeline, PO ledger, Decision Receipt, and a global Invoice AI launcher.
 10. **Require explicit scope selection.** The global assistant groups completed receipts by decision, supports search, and withholds the chat composer until the analyst manually chooses one invoice. Changing or closing it resets the conversation and selected context.
-11. **Answer receipt questions with AI.** When configured, the server builds a context from only the selected receipt and calls `gpt-6-luna` through the OpenAI Responses API with API storage disabled.
+11. **Answer receipt questions with AI.** When configured, the server builds a context from only the selected receipt and calls `gemini-3.6-flash` through the Google Gemini API.
 12. **Enforce guardrails twice.** Pre-model checks reject unrelated, cross-invoice, and prompt-injection requests. Post-model checks block payment, approval, and posting instructions. Visible evidence references are derived from the receipt.
 13. **Keep authority deterministic.** The assistant route cannot edit the run, confirm the demo ledger, post to an ERP, or execute payment.
 
@@ -134,7 +134,7 @@ This division of labor is the differentiator: generative AI improves comprehensi
 
 ### What exactly is “AI” in this project?
 
-> “There are two intelligence layers. Local OCR converts image-only invoices into text. The generative layer is a real, receipt-grounded assistant using the OpenAI Responses API with GPT-6 Luna when configured. It explains only the Decision Receipt an analyst manually selects. It is deliberately not the source of financial authority.”
+> “There are two intelligence layers. Local OCR converts image-only invoices into text. The generative layer is a real, receipt-grounded assistant using Google Gemini when configured. It explains only the Decision Receipt an analyst manually selects. It is deliberately not the source of financial authority.”
 
 ### Why use an LLM if the decision is deterministic?
 

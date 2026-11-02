@@ -16,11 +16,7 @@ SAMPLES = ROOT / "demo_samples"
 @pytest.fixture(autouse=True)
 def isolate_provider_environment(monkeypatch):
     for name in (
-        "OPENAI_API_KEY",
         "GEMINI_API_KEY",
-        "PROOFLEDGER_LLM_PROVIDER",
-        "PROOFLEDGER_LLM_MODEL",
-        "PROOFLEDGER_OPENAI_MODEL",
         "PROOFLEDGER_GEMINI_MODEL",
         "PROOFLEDGER_GEMINI_THINKING_LEVEL",
     ):
@@ -40,20 +36,19 @@ def upload(client, filename: str) -> dict:
 
 
 def test_assistant_status_truthfully_reports_missing_configuration(client, monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     response = client.get("/api/assistant/status")
     assert response.status_code == 200
     payload = response.json()
     assert payload["configured"] is False
     assert payload["provider"] is None
-    assert payload["provider_id"] == "openai"
-    assert payload["model"] == "gpt-6-luna"
+    assert payload["provider_id"] == "gemini"
+    assert payload["model"] == "gemini-3.6-flash"
     assert payload["configuration_error"] is None
     assert payload["scope"] == "selected_invoice_only"
 
 
-def test_assistant_status_prefers_gemini_when_both_keys_exist(client, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-key-not-sent")
+def test_assistant_status_reports_gemini_configuration(client, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-not-sent")
 
     response = client.get("/api/assistant/status")
@@ -76,18 +71,6 @@ def test_invalid_gemini_thinking_level_is_reported_as_configuration_error(client
     assert status["configured"] is False
     assert status["provider_id"] == "gemini"
     assert "minimal, low, medium, or high" in status["configuration_error"]
-
-
-def test_explicit_openai_provider_override_is_respected(client, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-key-not-sent")
-    monkeypatch.setenv("GEMINI_API_KEY", "gemini-key-not-sent")
-    monkeypatch.setenv("PROOFLEDGER_LLM_PROVIDER", "openai")
-    monkeypatch.setenv("PROOFLEDGER_OPENAI_MODEL", "openai-test-model")
-
-    payload = client.get("/api/assistant/status").json()
-
-    assert payload["provider"] == "OpenAI Responses API"
-    assert payload["model"] == "openai-test-model"
 
 
 def test_assistant_rejects_unrelated_and_injection_requests_before_model_call(client):
@@ -131,7 +114,7 @@ def test_assistant_rejects_unrelated_and_injection_requests_before_model_call(cl
 )
 def test_selected_receipt_accepts_natural_contextual_questions(client, monkeypatch, question):
     run = upload(client, "happy_path.pdf")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         "backend.app.main.generate_invoice_answer",
         lambda prompt, history, context: f"Grounded answer for {context['receipt_id']}: {prompt}",
@@ -178,11 +161,11 @@ def test_guardrail_rejects_unsafe_or_unrelated_prompt_variants(client, question)
 
 
 def test_assistant_requires_real_provider_configuration(client, monkeypatch):
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     run = upload(client, "happy_path.pdf")
     response = client.post(f"/api/runs/{run['id']}/assistant", json={"question": "Why is this invoice ready?"})
     assert response.status_code == 503
-    assert "OPENAI_API_KEY" in response.json()["detail"]
+    assert "GEMINI_API_KEY" in response.json()["detail"]
 
 
 def test_scoped_assistant_receives_only_selected_receipt_and_returns_evidence(client, monkeypatch):
@@ -196,7 +179,7 @@ def test_scoped_assistant_receives_only_selected_receipt_and_returns_evidence(cl
             "so it exceeds capacity by INR 5,000. [Rule: B001_PO_REMAINING]"
         )
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr("backend.app.main.generate_invoice_answer", fake_answer)
     response = client.post(
         f"/api/runs/{run['id']}/assistant",
@@ -221,7 +204,7 @@ def test_scoped_assistant_receives_only_selected_receipt_and_returns_evidence(cl
 
 def test_assistant_request_size_and_history_boundaries(client, monkeypatch):
     run = upload(client, "happy_path.pdf")
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr("backend.app.main.generate_invoice_answer", lambda question, history, context: "Bounded answer")
 
     valid_500 = "invoice " + ("x" * 492)
@@ -342,20 +325,7 @@ def test_broad_issue_and_numbers_questions_return_relevant_evidence():
     assert {"Rule T001_TOTAL_RECONCILIATION", "Rule B001_PO_REMAINING"}.issubset(number_labels)
 
 
-def test_model_output_parser_and_payment_guardrail():
-    payload = {
-        "output": [
-            {"type": "reasoning", "summary": []},
-            {
-                "type": "message",
-                "content": [
-                    {"type": "output_text", "text": "First evidence sentence."},
-                    {"type": "output_text", "text": "Second evidence sentence."},
-                ],
-            },
-        ]
-    }
-    assert assistant_module._extract_output_text(payload) == "First evidence sentence.\nSecond evidence sentence."
+def test_payment_guardrail():
     guarded = assistant_module._safe_answer("I approve this invoice for payment.", "NEEDS_REVIEW")
     assert "cannot approve" in guarded
     assert "needs review" in guarded
@@ -449,58 +419,6 @@ def test_history_is_bounded_and_sanitized():
     assert all("poem" not in item["content"] for item in cleaned)
 
 
-def test_provider_request_is_receipt_scoped_private_and_bounded(monkeypatch):
-    captured: dict = {}
-    real_client = assistant_module.httpx.Client
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        captured["authorization"] = request.headers.get("authorization")
-        captured["payload"] = json.loads(request.content)
-        return httpx.Response(
-            200,
-            request=request,
-            json={
-                "output": [
-                    {
-                        "type": "message",
-                        "content": [{"type": "output_text", "text": "The receipt needs review. [Receipt: decision]"}],
-                    }
-                ]
-            },
-        )
-
-    def client_factory(**kwargs):
-        return real_client(transport=httpx.MockTransport(handler), **kwargs)
-
-    monkeypatch.setenv("OPENAI_API_KEY", "secret-test-key")
-    monkeypatch.setenv("PROOFLEDGER_LLM_MODEL", "test-model")
-    monkeypatch.setattr(assistant_module.httpx, "Client", client_factory)
-    context = {
-        "receipt_id": "selected-receipt-only",
-        "decision": "NEEDS_REVIEW",
-        "invoice_fields": {"invoice_number": "SYN-100"},
-        "policy_checks": [],
-    }
-    history = [{"role": "user", "content": "  explain   it  "}] * 12
-
-    answer = assistant_module.generate_invoice_answer("What is this?", history, context)
-
-    payload = captured["payload"]
-    model_input = json.loads(payload["input"])
-    assert captured["authorization"] == "Bearer secret-test-key"
-    assert payload["model"] == "test-model"
-    assert payload["store"] is False
-    assert payload["max_output_tokens"] == 500
-    assert "untrusted data" in payload["instructions"]
-    assert model_input["invoice_context"]["receipt_id"] == "selected-receipt-only"
-    assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "SYN-100"
-    assert len(model_input["conversation"]) == assistant_module.MAX_HISTORY_MESSAGES
-    assert model_input["answer_intent"] == "overview"
-    assert "Identify the invoice" in model_input["response_guidance"]
-    assert all(item["content"] == "explain it" for item in model_input["conversation"])
-    assert answer == "The receipt needs review."
-
-
 def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     captured: dict = {}
     real_client = assistant_module.httpx.Client
@@ -529,7 +447,6 @@ def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
             },
         )
 
-    monkeypatch.setenv("OPENAI_API_KEY", "openai-key-not-sent")
     monkeypatch.setenv("GEMINI_API_KEY", "gemini-secret-test-key")
     monkeypatch.setenv("PROOFLEDGER_GEMINI_MODEL", "gemini-test-model")
     monkeypatch.setenv("PROOFLEDGER_GEMINI_THINKING_LEVEL", "low")
@@ -545,7 +462,8 @@ def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
         "policy_checks": [],
     }
 
-    answer = assistant_module.generate_invoice_answer("What is this?", [], context)
+    history = [{"role": "user", "content": "  explain   it  "}] * 12
+    answer = assistant_module.generate_invoice_answer("What is this?", history, context)
 
     payload = captured["payload"]
     model_input = json.loads(payload["contents"][0]["parts"][0]["text"])
@@ -559,6 +477,8 @@ def test_gemini_request_is_receipt_scoped_private_and_bounded(monkeypatch):
     assert "untrusted data" in payload["systemInstruction"]["parts"][0]["text"]
     assert model_input["invoice_context"]["receipt_id"] == "selected-gemini-receipt"
     assert model_input["invoice_context"]["invoice_fields"]["invoice_number"] == "GEM-100"
+    assert len(model_input["conversation"]) == assistant_module.MAX_HISTORY_MESSAGES
+    assert all(item["content"] == "explain it" for item in model_input["conversation"])
     assert model_input["answer_intent"] == "overview"
     assert "Identify the invoice" in model_input["response_guidance"]
     assert "hidden reasoning" not in answer
@@ -594,7 +514,7 @@ def test_provider_http_failures_are_mapped_to_safe_errors(monkeypatch, status_co
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(status_code, request=request, json={"error": {"message": "provider detail is not exposed"}})
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         assistant_module.httpx,
         "Client",
@@ -611,7 +531,7 @@ def test_provider_network_failure_is_mapped_to_safe_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("synthetic connection failure", request=request)
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         assistant_module.httpx,
         "Client",
@@ -628,7 +548,7 @@ def test_malformed_provider_response_is_mapped_to_safe_error(monkeypatch):
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, request=request, content=b"not-json")
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         assistant_module.httpx,
         "Client",
@@ -649,7 +569,7 @@ def test_provider_quota_exhaustion_has_actionable_safe_error(monkeypatch):
             json={"error": {"type": "insufficient_quota", "code": "insufficient_quota"}},
         )
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         assistant_module.httpx,
         "Client",
@@ -669,21 +589,19 @@ def test_endpoint_post_model_guardrail_blocks_payment_authority(client, monkeypa
             200,
             request=request,
             json={
-                "output": [
+                "candidates": [
                     {
-                        "type": "message",
-                        "content": [
-                            {
-                                "type": "output_text",
-                                "text": "You can approve and proceed with payment for this invoice.",
-                            }
-                        ],
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": "You can approve and proceed with payment for this invoice."}],
+                        },
+                        "finishReason": "STOP",
                     }
                 ]
             },
         )
 
-    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-sent")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key-not-sent")
     monkeypatch.setattr(
         assistant_module.httpx,
         "Client",
