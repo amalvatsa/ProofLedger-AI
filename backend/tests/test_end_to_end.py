@@ -357,6 +357,40 @@ def test_confirmation_rechecks_duplicate_across_separate_runs(client):
     assert "confirmed invoice now exists" in duplicate_confirmation.json()["detail"]
 
 
+def test_distinct_partial_invoices_on_one_po_are_not_duplicates(client, tmp_path):
+    first = generate_and_upload(
+        client,
+        tmp_path,
+        "partial-one.pdf",
+        invoice_number="PARTIAL-001",
+        net="20000.00",
+        tax="3600.00",
+        gross="23600.00",
+    )
+    assert first["decision"] == "READY_FOR_POSTING"
+    assert check_by_id(first, "D001_DUPLICATE")["outcome"] == "PASS"
+    assert client.post(f"/api/runs/{first['id']}/confirm").status_code == 200
+
+    second = generate_and_upload(
+        client,
+        tmp_path,
+        "partial-two.pdf",
+        invoice_number="PARTIAL-002",
+        net="25000.00",
+        tax="4500.00",
+        gross="29500.00",
+    )
+    assert second["decision"] == "READY_FOR_POSTING"
+    assert check_by_id(second, "D001_DUPLICATE")["outcome"] == "PASS"
+    assert second["money"]["committed"] == "65000.00"
+    assert second["money"]["remaining"] == "55000.00"
+    assert client.post(f"/api/runs/{second['id']}/confirm").status_code == 200
+
+    po = next(item for item in client.get("/api/ledger").json() if item["po_number"] == "PO-1001")
+    assert po["confirmed_net"] == "90000.00"
+    assert po["remaining_net"] == "30000.00"
+
+
 def test_events_history_and_notes_persist_across_client_refresh(client):
     run = upload(client, "split_po_overspend.pdf")
     stages = [event["stage"] for event in run["events"]]

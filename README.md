@@ -26,6 +26,12 @@ The fallback sends the PDF and locally extracted page text to Gemini. It cannot 
 
 Actual limitations: this path is opt-in because PDFs leave the local machine; it is capped at 10 pages; values without locally corroborated text are rejected; an image-only PDF still needs local OCR text for field evidence; ambiguous numeric dates become null; line items are descriptions rather than a full quantity/rate table; a missing PO by itself does not trigger an external call; and no production accuracy benchmark has been established.
 
+### Partial invoices and three-way matching boundary
+
+ProofLedger supports legitimate partial invoicing financially. Multiple invoices may reference the same PO as long as each has a distinct same-supplier invoice identifier and every new net claim fits within `authorized PO net − previously confirmed invoice net`. Merely sharing a PO never makes two invoices duplicates, and evaluating a recommendation does not consume capacity.
+
+The current prototype does **not** claim physical quantity or delivery verification. Quantity-level three-way matching requires authoritative PO line items, ordered quantities, unit prices, goods-receipt records, accepted quantities, previously invoiced quantities, and configured price/quantity tolerances. Until those records exist, ProofLedger reports only financial utilization and must not imply that goods were delivered or accepted.
+
 ## One-time setup
 
 Requirements: Python 3.11+, Node.js 20+, npm, and optional Tesseract for the scanned-invoice success path. Without Tesseract, scanned PDFs fail safely to review.
