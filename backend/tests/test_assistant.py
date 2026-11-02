@@ -213,6 +213,9 @@ def test_scoped_assistant_receives_only_selected_receipt_and_returns_evidence(cl
     assert captured["context"]["receipt_id"] == run["id"]
     assert captured["context"]["invoice_fields"]["invoice_number"] == "NOV-3500"
     assert captured["context"]["money"]["exceeded"] == "5000.00"
+    budget_context = next(item for item in captured["context"]["policy_checks"] if item["rule_id"] == "B001_PO_REMAINING")
+    assert budget_context["outcome"] == "FAIL"
+    assert "PO amendment" in budget_context["resolution"]
     assert "notes" not in captured["context"]
 
 

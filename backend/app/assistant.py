@@ -300,6 +300,7 @@ def build_invoice_context(run_payload: dict[str, Any]) -> dict[str, Any]:
                 "outcome": check.get("outcome"),
                 "detail": check.get("detail"),
                 "evidence": check.get("evidence") or {},
+                "resolution": check.get("resolution"),
             }
             for check in run_payload.get("checks") or []
         ],
