@@ -59,6 +59,15 @@ def _committed_net(session: Session, po_number: str) -> Decimal:
     return money(value) or Decimal("0.00")
 
 
+def _field_supported(extraction: dict[str, Any], *field_names: str) -> bool:
+    sources = extraction.get("sources") or {}
+    for field_name in field_names:
+        source = sources.get(field_name)
+        if not isinstance(source, dict) or not source.get("page") or not source.get("snippet"):
+            return False
+    return True
+
+
 @dataclass
 class PolicyResult:
     decision: str
@@ -86,12 +95,20 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
             )
         )
     elif vendor:
+        vendor_supported = _field_supported(
+            extraction,
+            "vendor_name" if fields.get("vendor_name") else "vendor_id",
+        )
         checks.append(
             check(
                 "V001_APPROVED_VENDOR",
                 "Approved vendor",
-                "REVIEW",
-                f"{vendor.name} exists but is not active.",
+                "FAIL" if vendor_supported else "REVIEW",
+                (
+                    f"{vendor.name} is authoritatively marked {vendor.status}; company policy does not permit processing."
+                    if vendor_supported
+                    else f"{vendor.name} may be inactive, but the invoice identity evidence is not reliable enough to block automatically."
+                ),
                 {"vendor_id": vendor.vendor_id, "status": vendor.status},
             )
         )
@@ -131,12 +148,36 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         matched_po = session.query(PurchaseOrder).filter(func.upper(PurchaseOrder.po_number) == po_reference.upper()).first()
         if not matched_po:
             po_outcome, po_detail = "REVIEW", f"PO {po_reference} does not exist in the confirmed PO ledger."
-        elif not vendor or matched_po.vendor_id != vendor.vendor_id:
-            po_outcome, po_detail = "REVIEW", f"PO {matched_po.po_number} does not belong to the matched supplier."
+        elif not vendor:
+            po_outcome, po_detail = "REVIEW", f"PO {matched_po.po_number} exists, but the supplier identity is not verified."
+        elif matched_po.vendor_id != vendor.vendor_id:
+            reliable_mismatch = _field_supported(
+                extraction,
+                "po_reference",
+                "vendor_name" if fields.get("vendor_name") else "vendor_id",
+            )
+            po_outcome = "FAIL" if reliable_mismatch else "REVIEW"
+            po_detail = (
+                f"Verified supplier {vendor.name} conflicts with the authoritative owner of PO {matched_po.po_number}."
+                if reliable_mismatch
+                else f"PO {matched_po.po_number} may belong to another supplier, but the identity evidence is insufficient to block automatically."
+            )
         elif fields.get("currency") != matched_po.currency:
-            po_outcome, po_detail = "REVIEW", f"Invoice currency does not match PO {matched_po.po_number}."
+            reliable_currency = _field_supported(extraction, "po_reference", "currency")
+            po_outcome = "FAIL" if reliable_currency else "REVIEW"
+            po_detail = (
+                f"Verified invoice currency {fields.get('currency')} conflicts with {matched_po.currency} on PO {matched_po.po_number}."
+                if reliable_currency
+                else f"Invoice currency may not match PO {matched_po.po_number}, but the evidence is insufficient to block automatically."
+            )
         elif matched_po.status != "OPEN":
-            po_outcome, po_detail = "REVIEW", f"PO {matched_po.po_number} is not open."
+            reliable_po = _field_supported(extraction, "po_reference")
+            po_outcome = "FAIL" if reliable_po else "REVIEW"
+            po_detail = (
+                f"PO {matched_po.po_number} is authoritatively marked {matched_po.status} and cannot accept new invoices."
+                if reliable_po
+                else f"PO {matched_po.po_number} may be closed, but the reference is not reliable enough to block automatically."
+            )
         else:
             po_outcome, po_detail = "PASS", f"Exact PO {matched_po.po_number} matches supplier and currency."
     else:
@@ -168,6 +209,7 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
     total_outcome = "REVIEW"
     total_detail = "Tax treatment or monetary fields are insufficient for verification."
     difference: Decimal | None = None
+    amount_evidence_reliable = _field_supported(extraction, "net_amount", "tax_amount", "gross_total")
     if net is not None and tax is not None and gross is not None and min(net, tax, gross) >= 0:
         difference = abs((net + tax) - gross)
         if treatment in {"EXCLUSIVE", "INCLUSIVE"} and difference <= ROUNDING_TOLERANCE:
@@ -177,9 +219,20 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         elif treatment not in {"EXCLUSIVE", "INCLUSIVE"}:
             total_detail = "Tax treatment is unknown, so the total cannot be verified safely."
         else:
+            total_outcome = "FAIL" if amount_evidence_reliable else "REVIEW"
             total_detail = f"Net plus tax differs from gross by INR {difference:.2f}."
     elif any(value is not None and value < 0 for value in (net, tax, gross)):
-        total_detail = "A negative monetary value was detected."
+        total_outcome = "FAIL" if amount_evidence_reliable else "REVIEW"
+        total_detail = (
+            "A source-supported negative monetary value violates invoice policy."
+            if amount_evidence_reliable
+            else "A possible negative monetary value needs source verification before it can be treated as a policy violation."
+        )
+    duplicate_supported = _field_supported(
+        extraction,
+        "invoice_number",
+        "vendor_name" if fields.get("vendor_name") else "vendor_id",
+    )
     checks.append(
         check(
             "T001_TOTAL_RECONCILIATION",
@@ -212,10 +265,12 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         check(
             "D001_DUPLICATE",
             "Confirmed invoice duplicate",
-            "FAIL" if duplicate else "PASS",
+            "FAIL" if duplicate and duplicate_supported else "REVIEW" if duplicate else "PASS",
             (
                 f"Normalized invoice number matches confirmed {duplicate.invoice_number} from "
                 f"{duplicate.confirmed_at.date().isoformat()}; posting again risks a double payment."
+                if duplicate and duplicate_supported
+                else "A possible ledger duplicate was found, but invoice identity evidence requires human confirmation."
                 if duplicate
                 else "No same-supplier confirmed invoice has this normalized invoice number."
             ),
@@ -242,7 +297,7 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
                 f"INR {remaining:.2f} for this INR {net:.2f} net claim."
             )
         else:
-            budget_outcome = "REVIEW"
+            budget_outcome = "FAIL" if _field_supported(extraction, "po_reference", "net_amount") else "REVIEW"
             budget_detail = (
                 f"Only INR {remaining:.2f} remains on the PO; the INR {net:.2f} net claim exceeds it by "
                 f"INR {exceeded:.2f}."
@@ -282,11 +337,26 @@ def evaluate_invoice(session: Session, fields: dict[str, Any], extraction: dict[
         )
     )
 
-    if duplicate:
+    hard_failures = [item for item in checks if item["outcome"] == "FAIL"]
+    if hard_failures:
         decision = "BLOCKED"
-        explanation = "This supplier and normalized invoice number already exist in the confirmed ledger. The invoice is blocked to prevent a potential duplicate payment."
-        next_action = f"Inspect confirmed invoice {duplicate.invoice_number} before taking any further action."
-    elif any(item["outcome"] == "REVIEW" for item in checks) or any(item["outcome"] == "FAIL" for item in checks):
+        failed_ids = {item["rule_id"] for item in hard_failures}
+        if "D001_DUPLICATE" in failed_ids and duplicate:
+            explanation = "BLOCKED: This supplier and normalized invoice number already exist in the confirmed ledger. Processing again risks a duplicate payment."
+            next_action = f"Inspect confirmed invoice {duplicate.invoice_number} before taking any further action."
+        elif "B001_PO_REMAINING" in failed_ids and exceeded and exceeded > 0:
+            explanation = f"BLOCKED: Invoice exceeds the remaining approved PO budget by INR {exceeded:.2f}."
+            next_action = "Request a corrected invoice or verify a formally approved PO amendment before reprocessing."
+        elif "T001_TOTAL_RECONCILIATION" in failed_ids:
+            explanation = "BLOCKED: Source-supported invoice amounts violate the configured monetary reconciliation policy."
+            next_action = "Request a corrected invoice with consistent net, tax, and gross amounts before reprocessing."
+        elif "V001_APPROVED_VENDOR" in failed_ids:
+            explanation = "BLOCKED: The verified supplier is inactive or prohibited under the configured vendor policy."
+            next_action = "Ask an authorized procurement or vendor-management owner to resolve the supplier status before reprocessing."
+        else:
+            explanation = f"BLOCKED: {hard_failures[0]['detail']}"
+            next_action = "Resolve the confirmed policy violation before reprocessing this invoice."
+    elif any(item["outcome"] == "REVIEW" for item in checks):
         decision = "NEEDS_REVIEW"
         if exceeded and exceeded > 0:
             explanation = (

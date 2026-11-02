@@ -201,13 +201,13 @@ def test_scoped_assistant_receives_only_selected_receipt_and_returns_evidence(cl
     response = client.post(
         f"/api/runs/{run['id']}/assistant",
         json={
-            "question": "Explain the PO balance and why this invoice needs review.",
+            "question": "Explain the PO balance and why this invoice is blocked.",
             "history": [{"role": "user", "content": "What is the decision?"}],
         },
     )
     assert response.status_code == 200
     payload = response.json()
-    assert payload["decision_snapshot"] == "NEEDS_REVIEW"
+    assert payload["decision_snapshot"] == "BLOCKED"
     assert payload["scope"] == "selected_invoice_only"
     assert any(item["label"] == "Rule B001_PO_REMAINING" for item in payload["evidence"])
     assert captured["context"]["receipt_id"] == run["id"]

@@ -270,8 +270,16 @@ def test_unreconciled_model_totals_are_never_marked_verified(tmp_path, monkeypat
     assert "TOTALS_UNVERIFIED" in result["diagnostics"]
 
 
-@pytest.mark.parametrize("failure_mode", ["provider", "unreconciled"])
-def test_fallback_failures_route_the_existing_policy_engine_to_review(client, tmp_path, monkeypatch, failure_mode):
+@pytest.mark.parametrize(
+    ("failure_mode", "expected_decision", "expected_total_outcome"),
+    [
+        ("provider", "NEEDS_REVIEW", "REVIEW"),
+        ("unreconciled", "BLOCKED", "FAIL"),
+    ],
+)
+def test_fallback_failures_follow_evidence_aware_policy(
+    client, tmp_path, monkeypatch, failure_mode, expected_decision, expected_total_outcome
+):
     gross = "1200.00" if failure_mode == "unreconciled" else "1180.00"
     path = tmp_path / f"policy-{failure_mode}.pdf"
     draw_unfamiliar_invoice(path, gross=gross)
@@ -292,9 +300,11 @@ def test_fallback_failures_route_the_existing_policy_engine_to_review(client, tm
     run = client.get(f"/api/runs/{response.json()['run_id']}").json()
 
     assert run["status"] == "COMPLETED"
-    assert run["decision"] == "NEEDS_REVIEW"
+    assert run["decision"] == expected_decision
     extraction_check = next(item for item in run["checks"] if item["rule_id"] == "X001_EXTRACTION_QUALITY")
     assert extraction_check["outcome"] == "REVIEW"
+    total_check = next(item for item in run["checks"] if item["rule_id"] == "T001_TOTAL_RECONCILIATION")
+    assert total_check["outcome"] == expected_total_outcome
     validation_event = next(item for item in run["events"] if item["stage"] == "EVIDENCE_VALIDATED")
     assert validation_event["outcome"] == "ATTENTION"
 
