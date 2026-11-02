@@ -791,8 +791,22 @@ button, input, select, textarea { font: inherit; }
 .po-balance-card { margin-top: 14px; padding: 17px 18px; border-color: #e4e7ec; border-radius: 11px; background: #fbfcfe; }
 .po-balance-heading { font-size: 13px; }
 .po-balance-heading strong { color: #16856d; }
+.po-financial-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; margin: 14px 0; overflow: hidden; background: #e4e7ec; border: 1px solid #e4e7ec; border-radius: 9px; }
+.po-financial-grid > div { min-height: 65px; display: flex; flex-direction: column; justify-content: center; padding: 10px 12px; background: white; }
+.po-financial-grid span { color: #667085; font-size: 11px; }
+.po-financial-grid strong { margin-top: 4px; color: #1d2939; font-size: 14px; font-variant-numeric: tabular-nums; }
+.po-financial-grid strong.negative-value { color: #b83f49; }
 .balance-track { height: 8px; background: #e9edf3; }
 .balance-fill { background: #4263eb; }
+.po-projection-track { position: relative; }
+.po-projection-track .balance-fill, .balance-projected { position: absolute; inset: 0 auto 0 0; }
+.balance-projected { background: repeating-linear-gradient(135deg, #9aacee 0 5px, #bdc8f2 5px 10px); border-radius: 0 999px 999px 0; }
+.po-progress-legend { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 16px; margin-top: 10px; color: #667085; font-size: 11px; }
+.po-progress-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.po-progress-legend i { width: 9px; height: 9px; display: inline-block; border-radius: 2px; }
+.legend-confirmed { background: #4263eb; }
+.legend-projected { background: repeating-linear-gradient(135deg, #9aacee 0 3px, #bdc8f2 3px 6px); }
+.po-capacity-note { margin: 11px 0 0; color: #667085; font-size: 11px; line-height: 1.45; }
 .balance-labels { margin-top: 8px; color: #667085; font-size: 12px; }
 .overage-callout { padding: 9px 11px; color: #8a5a17; background: #fff6e5; font-size: 12px; }
 .candidate-card { padding: 14px 16px; color: #b7791f; background: #fff8ea; border-color: #f0dba9; }

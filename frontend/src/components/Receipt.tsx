@@ -102,12 +102,21 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
     : `${run.decision === "BLOCKED" ? "BLOCKED" : "NEEDS REVIEW"} — ${decisionReasonLabels[primaryCheck?.rule_id] || primaryCheck?.title || "Action required"}`;
   const decisionExplanation = (run.explanation || "The saved evidence requires attention.").replace(/^BLOCKED:\s*/i, "");
 
-  const balancePercent = useMemo(() => {
+  const poMetrics = useMemo(() => {
     const authorized = Number(run.money.authorized || 0);
     const committed = Number(run.money.committed || 0);
-    if (!authorized) return 0;
-    return Math.min((committed / authorized) * 100, 100);
-  }, [run.money.authorized, run.money.committed]);
+    const current = Number(run.money.net || 0);
+    const remaining = Number(run.money.remaining || 0);
+    if (!authorized) return { confirmedPercent: 0, projectedPercent: 0, projectedIncrement: 0, projectedRemaining: null };
+    const confirmedPercent = Math.max(0, (committed / authorized) * 100);
+    const projectedPercent = Math.max(0, ((committed + current) / authorized) * 100);
+    return {
+      confirmedPercent,
+      projectedPercent,
+      projectedIncrement: Math.max(0, Math.min(projectedPercent, 100) - Math.min(confirmedPercent, 100)),
+      projectedRemaining: remaining - current,
+    };
+  }, [run.money.authorized, run.money.committed, run.money.net, run.money.remaining]);
 
   useEffect(() => {
     if (!run.document_url) {
@@ -303,17 +312,36 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
       {run.matched_po_number && (
         <div className="po-balance-card">
           <div className="po-balance-heading">
-            <span><Landmark size={17} /> {run.matched_po_number} capacity</span>
-            <strong>{formatMoney(run.money.remaining)} remaining</strong>
+            <span><Landmark size={17} /> {run.matched_po_number} financial capacity</span>
+            <strong>{poMetrics.confirmedPercent.toFixed(1)}% confirmed utilization</strong>
           </div>
-          <div className="balance-track" aria-label={`${balancePercent.toFixed(0)} percent already committed`}>
-            <motion.div className="balance-fill" initial={{ width: 0 }} animate={{ width: `${balancePercent}%` }} transition={{ duration: 0.45 }} />
+          <div className="po-financial-grid">
+            <div><span>Approved budget</span><strong>{formatMoney(run.money.authorized)}</strong></div>
+            <div><span>Previously confirmed</span><strong>{formatMoney(run.money.committed)}</strong></div>
+            <div><span>Current remaining</span><strong>{formatMoney(run.money.remaining)}</strong></div>
+            <div><span>Current invoice net</span><strong>{formatMoney(run.money.net)}</strong></div>
+            <div><span>Projected balance</span><strong className={Number(poMetrics.projectedRemaining) < 0 ? "negative-value" : ""}>{formatMoney(poMetrics.projectedRemaining?.toFixed(2) || null)}</strong></div>
+            <div><span>Projected utilization</span><strong className={poMetrics.projectedPercent > 100 ? "negative-value" : ""}>{poMetrics.projectedPercent.toFixed(1)}%</strong></div>
           </div>
-          <div className="balance-labels">
-            <span>Confirmed {formatMoney(run.money.committed)}</span>
-            <span>Authorized {formatMoney(run.money.authorized)}</span>
+          <div
+            className="balance-track po-projection-track"
+            aria-label={`${poMetrics.confirmedPercent.toFixed(1)} percent confirmed financial utilization; ${poMetrics.projectedPercent.toFixed(1)} percent projected if this invoice is later confirmed`}
+          >
+            <motion.div className="balance-fill" initial={{ width: 0 }} animate={{ width: `${Math.min(poMetrics.confirmedPercent, 100)}%` }} transition={{ duration: 0.45 }} />
+            <motion.div
+              className="balance-projected"
+              initial={{ width: 0 }}
+              animate={{ width: `${poMetrics.projectedIncrement}%` }}
+              transition={{ duration: 0.45, delay: 0.12 }}
+              style={{ left: `${Math.min(poMetrics.confirmedPercent, 100)}%` }}
+            />
+          </div>
+          <div className="po-progress-legend">
+            <span><i className="legend-confirmed" /> Confirmed financial utilization</span>
+            <span><i className="legend-projected" /> Current invoice projection—not committed</span>
           </div>
           {Number(run.money.exceeded || 0) > 0 && <div className="overage-callout">Requested net exceeds remaining capacity by {formatMoney(run.money.exceeded)}.</div>}
+          <p className="po-capacity-note">This measures financial authorization only. It does not represent goods delivered or accepted.</p>
         </div>
       )}
 
