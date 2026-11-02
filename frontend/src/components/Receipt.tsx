@@ -32,6 +32,51 @@ function comparisonMoney(value: string | null | undefined, currency = "INR"): st
   return value === null || value === undefined || value === "" ? "Not available" : formatMoney(value, currency);
 }
 
+const exceptionPriority = [
+  "D001_DUPLICATE",
+  "B001_PO_REMAINING",
+  "T001_TOTAL_RECONCILIATION",
+  "V001_APPROVED_VENDOR",
+  "P001_PO_MATCH",
+  "I001_REQUIRED_FIELDS",
+  "X001_EXTRACTION_QUALITY",
+];
+
+const decisionReasonLabels: Record<string, string> = {
+  D001_DUPLICATE: "Confirmed Duplicate",
+  B001_PO_REMAINING: "PO Budget Exceeded",
+  T001_TOTAL_RECONCILIATION: "Invoice Amounts Do Not Reconcile",
+  V001_APPROVED_VENDOR: "Supplier Policy Violation",
+  P001_PO_MATCH: "Purchase Order Conflict",
+  I001_REQUIRED_FIELDS: "Required Information Missing",
+  X001_EXTRACTION_QUALITY: "Document Evidence Is Uncertain",
+};
+
+function evidenceText(value: unknown, currency: string): string | null {
+  return typeof value === "string" && value ? formatMoney(value, currency) : null;
+}
+
+function financialEvidence(check: PolicyCheck, currency: string): Array<[string, string]> {
+  if (check.rule_id === "B001_PO_REMAINING") {
+    return [
+      ["Approved PO", evidenceText(check.evidence.authorized_net, currency)],
+      ["Previously confirmed", evidenceText(check.evidence.confirmed_net, currency)],
+      ["Remaining", evidenceText(check.evidence.remaining_net, currency)],
+      ["Current invoice", evidenceText(check.evidence.requested_net, currency)],
+      ["Excess", evidenceText(check.evidence.exceeded_by, currency)],
+    ].filter((item): item is [string, string] => Boolean(item[1]));
+  }
+  if (check.rule_id === "T001_TOTAL_RECONCILIATION") {
+    return [
+      ["Net", evidenceText(check.evidence.net, currency)],
+      ["Tax", evidenceText(check.evidence.tax, currency)],
+      ["Gross", evidenceText(check.evidence.gross, currency)],
+      ["Difference", evidenceText(check.evidence.difference, currency)],
+    ].filter((item): item is [string, string] => Boolean(item[1]));
+  }
+  return [];
+}
+
 export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => Promise<void> | void }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [confirming, setConfirming] = useState(false);
@@ -48,6 +93,14 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
   const totalCheck = run.checks.find((item) => item.rule_id === "T001_TOTAL_RECONCILIATION");
   const duplicateCheck = run.checks.find((item) => item.rule_id === "D001_DUPLICATE");
   const passedChecks = run.checks.filter((item) => item.outcome === "PASS").length;
+  const attentionChecks = [...run.checks.filter((item) => item.outcome !== "PASS")].sort(
+    (left, right) => exceptionPriority.indexOf(left.rule_id) - exceptionPriority.indexOf(right.rule_id),
+  );
+  const primaryCheck = attentionChecks[0];
+  const decisionHeadline = run.decision === "READY_FOR_POSTING"
+    ? "READY FOR POSTING"
+    : `${run.decision === "BLOCKED" ? "BLOCKED" : "NEEDS REVIEW"} — ${decisionReasonLabels[primaryCheck?.rule_id] || primaryCheck?.title || "Action required"}`;
+  const decisionExplanation = (run.explanation || "The saved evidence requires attention.").replace(/^BLOCKED:\s*/i, "");
 
   const balancePercent = useMemo(() => {
     const authorized = Number(run.money.authorized || 0);
@@ -174,7 +227,8 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
           </div>
           <div>
             <span className="eyebrow">Recommendation—not a payment</span>
-            <h3>{run.explanation}</h3>
+            <h3>{decisionHeadline}</h3>
+            <p className="decision-reason"><strong>Reason:</strong> {decisionExplanation}</p>
           </div>
         </div>
         <div className="amount-card">
@@ -188,6 +242,31 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
         <span className="next-action-icon"><ArrowRight size={18} /></span>
         <span><strong>Recommended next action</strong>{run.next_action || "Review the saved evidence before continuing."}</span>
       </div>
+
+      {attentionChecks.length > 0 && (
+        <section className="exception-summary" aria-labelledby={`exceptions-${run.id}`}>
+          <div className="exception-summary-heading">
+            <div><span className="eyebrow">Complete exception summary</span><h3 id={`exceptions-${run.id}`}>All issues requiring attention</h3></div>
+            <strong>{attentionChecks.length} control{attentionChecks.length === 1 ? "" : "s"}</strong>
+          </div>
+          <div className="exception-summary-list">
+            {attentionChecks.map((item, index) => {
+              const figures = financialEvidence(item, run.money.currency || "INR");
+              return (
+                <article className={`exception-summary-item exception-${item.outcome.toLowerCase()}`} key={item.rule_id}>
+                  <div className="exception-rank">{index === 0 ? "Primary" : "Also"}</div>
+                  <div className="exception-summary-copy">
+                    <div><strong>{item.title}</strong><span>{item.rule_id} · {item.outcome === "FAIL" ? "Confirmed violation" : "Human review"}</span></div>
+                    <p>{item.detail}</p>
+                    {figures.length > 0 && <dl>{figures.map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{value}</dd></div>)}</dl>}
+                    {item.resolution && <small><b>Next:</b> {item.resolution}</small>}
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        </section>
+      )}
 
       <section className="reconciliation-section" aria-labelledby={`reconciliation-${run.id}`}>
         <div className="section-heading-row reconciliation-heading">
@@ -271,7 +350,7 @@ export function Receipt({ run, onRefresh }: { run: RunRecord; onRefresh: () => P
                   <span className="check-outcome">{item.outcome === "PASS" ? "Passed" : item.outcome === "FAIL" ? "Failed" : "Review"}</span>
                   <ChevronDown size={15} />
                 </summary>
-                <p>{item.detail}</p>
+                <p>{item.detail}{item.resolution && <><br /><strong>Suggested resolution:</strong> {item.resolution}</>}</p>
               </details>
             ))}
           </div>
